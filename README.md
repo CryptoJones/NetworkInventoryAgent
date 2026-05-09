@@ -1,128 +1,238 @@
-# Ronin48-NetworkInventoryAgent
+# NetworkInventoryAgent
 
 A lightweight, autonomous network inventory agent that discovers, catalogs, and reports on devices and assets across your network infrastructure.
 
 ## Overview
 
-Ronin48-NetworkInventoryAgent continuously scans your network to build and maintain an up-to-date inventory of all connected devices. It identifies hosts, open ports, running services, operating systems, and hardware details — giving you a living map of your network without requiring manual audits.
+NetworkInventoryAgent continuously scans your network to build and maintain an up-to-date inventory of all connected devices. It identifies hosts, open ports, running services, operating systems, and hardware details — giving you a living map of your network without requiring manual audits.
+
+The system is designed to run as **two cooperating agent instances** — named **Wintermute** and **Neuromancer** — that scan the same subnets independently and continuously sanity-check each other. If either agent crashes, stalls, or starts reporting wildly different data, the other detects it and logs a clear warning. This mutual watchdog architecture means the inventory is never silently wrong.
 
 ## Features
 
-- **Active and passive discovery** — combines active scanning (ping sweeps, port scans) with passive traffic analysis to find devices without flooding the network
-- **Asset fingerprinting** — identifies OS, vendor, device type, and running services for each discovered host
-- **Continuous monitoring** — detects new devices, removed devices, and configuration changes over time
-- **Structured output** — exports inventory data as JSON, CSV, or to a configurable backend (database, SIEM, ticketing system)
-- **Low footprint** — designed to run as a background agent with minimal CPU and network impact
-- **Alerting** — configurable alerts for unauthorized devices, unexpected open ports, or inventory drift
+- **Active discovery** — TCP-probe scanning across configurable CIDR ranges to find live hosts
+- **Asset fingerprinting** — records IP address, open ports, services, OS fingerprint, vendor, and device type per host
+- **Continuous monitoring** — periodic re-scans detect new devices, removed devices, and configuration changes over time
+- **Mutual watchdog** — two agent instances cross-check each other for liveness, scan freshness, and inventory consistency
+- **Structured logging** — human-readable text or machine-readable JSON log output via `log/slog`
+- **Graceful shutdown** — SIGINT / SIGTERM cancel in-flight scans cleanly before exit
+- **Low footprint** — no external server process; the database is a single SQLite file
 
 ## Requirements
 
 - Go 1.21+
-- Root or `CAP_NET_RAW` capability (for raw socket scanning)
 - Network access to the target subnets
 
 ## Installation
 
 ```bash
-git clone https://github.com/Ronin48/Ronin48-NetworkInventoryAgent.git
-cd Ronin48-NetworkInventoryAgent
-go build -o inventory-agent ./cmd/agent
+git clone https://codeberg.org/Ronin48/NetworkInventoryAgent.git
+cd NetworkInventoryAgent
+go build -o wintermute  ./cmd/wintermute
+go build -o neuromancer ./cmd/neuromancer
 ```
 
-## Usage
+## Running the agents
+
+Wintermute and Neuromancer are started independently, typically on the same host or two hosts on the same network segment. Each agent:
+
+1. Opens its own SQLite database
+2. Starts an HTTP health server (Wintermute on `:8080`, Neuromancer on `:8081`)
+3. Launches a watchdog goroutine pointed at its partner's health server
+4. Runs the scan loop in the foreground until it receives a signal
 
 ```bash
-# Run as a continuous background agent
-sudo ./inventory-agent --config config.json
+# Terminal 1 — Wintermute
+./wintermute -config configs/wintermute.json
 
-# Override the database path at runtime without editing the config
-INVENTORY_DB_PATH=/var/lib/inventory/inventory.db sudo ./inventory-agent
+# Terminal 2 — Neuromancer
+./neuromancer -config configs/neuromancer.json
 ```
+
+Ready-to-use configs are provided in `configs/`. Edit the `subnets` list before running.
+
+## How the mutual watchdog works
+
+Every `watchdog.interval` seconds, each agent performs three checks against its partner:
+
+### 1. Liveness
+
+```
+GET /health  →  200 OK (healthy) | 503 Service Unavailable (unhealthy)
+```
+
+If the peer fails to respond or returns a non-200 status, the failure is logged as a warning. After `max_failures` consecutive failures the peer is declared **DOWN** and an error is logged. The watchdog never kills or restarts the peer — that is left to an external supervisor (systemd, Docker, Kubernetes).
+
+### 2. Freshness
+
+```
+GET /status  →  JSON { last_scan_at, scan_count, host_count, ... }
+```
+
+If the peer's `last_scan_at` timestamp is older than `2 × scanner.scan_interval`, the peer is considered stale and a warning is logged. This catches a peer that is alive and responding to pings but whose scan loop has silently stopped making progress.
+
+### 3. Consistency
+
+If both agents have completed at least one scan, their `host_count` values are compared. If the percentage difference exceeds `max_host_drift_pct`, a warning is logged:
+
+```
+drift_pct = |local_hosts - peer_hosts| / max(local_hosts, peer_hosts) × 100
+```
+
+This catches split-brain scenarios where both agents are running but scanning different effective subsets of the network (e.g., due to a routing change or misconfiguration).
 
 ## Configuration
 
-The agent reads a JSON config file (default: `config.json` in the working directory) and then applies environment variable overrides on top. Environment variables always win, which makes the agent suitable for Docker and Kubernetes deployments without baking secrets into config files.
+Each agent reads a JSON config file and then applies environment variable overrides on top. Environment variables always win, which makes the agents suitable for Docker and Kubernetes deployments.
 
-### Config file
+### Full config reference
 
 ```json
 {
   "database": {
-    "path": "inventory.db"
+    "path": "wintermute.db"
   },
   "scanner": {
     "subnets": ["192.168.1.0/24", "10.0.0.0/8"],
     "scan_interval": "5m",
-    "timeout": "30s"
+    "timeout": "2s"
   },
   "log": {
     "level": "info",
     "format": "text"
+  },
+  "health": {
+    "addr": ":8080"
+  },
+  "watchdog": {
+    "peer_addr": "http://localhost:8081",
+    "interval": "30s",
+    "max_host_drift_pct": 50.0,
+    "max_failures": 3
   }
 }
 ```
 
-### Environment variable overrides
-
-| Variable | Overrides | Example |
-|----------|-----------|---------|
-| `INVENTORY_DB_PATH` | `database.path` | `/var/lib/inventory/db` |
-| `INVENTORY_LOG_LEVEL` | `log.level` | `debug` |
-| `INVENTORY_LOG_FORMAT` | `log.format` | `json` |
-
-### Config options reference
-
 | Key | Default | Description |
 |-----|---------|-------------|
-| `database.path` | `inventory.db` | SQLite database file path. Use `:memory:` for tests. |
+| `database.path` | `inventory.db` | SQLite database file. Use `:memory:` for tests. |
 | `scanner.subnets` | `[]` | CIDR ranges to scan |
 | `scanner.scan_interval` | `5m` | How often to re-scan the network |
-| `scanner.timeout` | `30s` | Per-host scan timeout |
+| `scanner.timeout` | `30s` | Per-host TCP probe timeout |
 | `log.level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `log.format` | `text` | Log format: `text` (human) or `json` (machine) |
+| `health.addr` | `:8080` | Address the health HTTP server listens on |
+| `watchdog.peer_addr` | — | Base URL of the partner agent's health server |
+| `watchdog.interval` | `30s` | How often the watchdog checks the partner |
+| `watchdog.max_host_drift_pct` | `50.0` | Max % host-count difference before a warning |
+| `watchdog.max_failures` | `3` | Consecutive liveness failures before declaring peer DOWN |
 
-## Output
+Duration values in the JSON config accept human-readable strings (`"5m"`, `"30s"`, `"2h"`) in addition to raw nanosecond integers.
 
-Each discovered host is recorded with:
+### Environment variable overrides
 
-- IP address and MAC address
-- Hostname (via reverse DNS)
-- Open ports and associated services
-- OS fingerprint, vendor, and device type
-- First seen / last seen timestamps
+| Variable | Overrides |
+|----------|-----------|
+| `INVENTORY_DB_PATH` | `database.path` |
+| `INVENTORY_LOG_LEVEL` | `log.level` |
+| `INVENTORY_LOG_FORMAT` | `log.format` |
+
+## Health endpoints
+
+Both agents expose two HTTP endpoints used by the watchdog and for external monitoring:
+
+| Endpoint | Method | Response |
+|----------|--------|----------|
+| `/health` | GET | `200 OK` if healthy, `503 Service Unavailable` if not |
+| `/status` | GET | JSON-encoded status snapshot (see below) |
+
+### `/status` response
+
+```json
+{
+  "name":         "wintermute",
+  "healthy":      true,
+  "started_at":   "2024-01-15T10:00:00Z",
+  "last_scan_at": "2024-01-15T10:05:00Z",
+  "host_count":   42,
+  "scan_count":   3
+}
+```
 
 ## Project layout
 
 ```
-cmd/agent/          Entry point. Additional binaries (server, CLI exporter, etc.)
-                    can be added as cmd/<name>/ without restructuring.
+cmd/
+  agent/          Generic single-agent binary (scaffold / reference).
+  wintermute/     Wintermute entry point. Health server on :8080,
+                  watchdog pointed at Neuromancer on :8081.
+  neuromancer/    Neuromancer entry point. Health server on :8081,
+                  watchdog pointed at Wintermute on :8080.
 
-internal/config/    Config loading: JSON file merged with environment variable
-                    overrides. internal/ so config types never leak to callers
-                    outside this module.
+configs/
+  wintermute.json  Ready-to-use config for Wintermute.
+  neuromancer.json Ready-to-use config for Neuromancer.
 
-internal/store/     Persistence interfaces (HostStore, PortStore, ScanStore) and
-                    sentinel errors (ErrNotFound, ErrDuplicate). The rest of the
-                    application depends only on these interfaces, never on a
-                    concrete database package.
+models/           Pure domain types (Host, Port, Scan). No database
+                  imports, no business logic — just structs.
 
-internal/sqlite/    SQLite implementations of the store interfaces. Swapping to
-                    Postgres means writing a new internal/postgres/ package; no
-                    other code changes.
+internal/
+  store/          Persistence interfaces (HostStore, PortStore,
+                  ScanStore) and sentinel errors (ErrNotFound,
+                  ErrDuplicate). The rest of the application depends
+                  only on these interfaces, never on a concrete DB.
 
-internal/sqlite/
-  migrations/       Versioned SQL files embedded into the binary at compile time.
-                    The runner records each applied migration in schema_migrations
-                    and wraps each one in a transaction, so a failed migration
-                    never leaves the schema in a partial state.
+  sqlite/         SQLite implementations of the store interfaces.
+    migrations/   Versioned SQL files embedded into the binary at
+                  compile time. The runner records each applied
+                  migration in schema_migrations and wraps each one
+                  in a transaction, so a failed migration never
+                  leaves the schema in a partial state.
 
-models/             Pure data types shared across the whole codebase. No database
-                    imports, no business logic — just structs.
+  config/         Config loading: JSON file merged with environment
+                  variable overrides. Custom Duration type supports
+                  human-readable strings ("5m") in JSON.
+
+  health/         Status type, concurrency-safe Tracker, HTTP server
+                  (/health and /status endpoints), and HTTP client
+                  used by the watchdog to poll its partner.
+
+  watchdog/       Watchdog loop: runs three checks (liveness,
+                  freshness, consistency) against the partner agent
+                  on every tick. Logs warnings and errors; never
+                  kills or restarts the peer process.
+
+  scanner/        TCP-probe network scanner. Iterates every IP in
+                  a CIDR range, dials a set of common ports, records
+                  live hosts and scan records in the store layer.
+
+  agent/          Periodic scan loop. Drives the scanner across all
+                  configured subnets, updates the health Tracker
+                  after each cycle, and blocks until context cancel.
+
+  logging/        Shared slog initialisation helper used by all
+                  agent binaries.
 ```
 
 ## Architecture decisions
 
 These decisions were made at project start to keep the codebase maintainable as it grows. Future contributors should understand the reasoning before changing them.
+
+---
+
+### Mutual watchdog — two named agents (Wintermute and Neuromancer)
+
+The system is intentionally designed to run as a pair. Running a single agent means a silent crash or stalled scan loop goes undetected until someone notices the inventory is stale. Running two independent agents that continuously cross-check each other eliminates that blind spot.
+
+Three checks run on every watchdog tick:
+
+- **Liveness** — is the peer reachable and reporting healthy?
+- **Freshness** — has the peer completed a scan recently (within 2× the configured scan interval)?
+- **Consistency** — do the two agents agree on how many hosts are on the network (within the drift threshold)?
+
+The watchdog never takes corrective action itself. It only logs. Actual recovery (restart, alert, failover) is the responsibility of an external supervisor. This keeps the watchdog simple, testable, and free of side effects.
+
+The names Wintermute and Neuromancer are a reference to William Gibson's *Neuromancer* (1984), in which two AIs monitor and interact with each other.
 
 ---
 
@@ -148,7 +258,7 @@ var _ store.HostStore = (*HostRepo)(nil)
 
 ### Versioned, embedded SQL migrations (`internal/sqlite/migrations`)
 
-Schema changes live in numbered SQL files (`001_initial.sql`, `002_add_tags.sql`, etc.) that are embedded into the binary at compile time using `//go:embed`. A lightweight runner applies any unapplied migrations in order and records each one in a `schema_migrations` table. Each migration runs inside its own transaction.
+Schema changes live in numbered SQL files (`001_initial.sql`, `002_add_tags.sql`, etc.) embedded into the binary at compile time using `//go:embed`. A lightweight runner applies any unapplied migrations in order and records each one in a `schema_migrations` table. Each migration runs inside its own transaction.
 
 **Why:** Keeping migrations in separate files means every schema change is reviewable in git history. Embedding them in the binary means deployments are self-contained — no external migration tool or file to distribute. Transactional application means a failed migration never leaves the schema half-applied.
 
@@ -158,27 +268,24 @@ To add a new migration, create the next numbered file: `internal/sqlite/migratio
 
 ### `context.Context` on every store method
 
-All `HostStore`, `PortStore`, and `ScanStore` methods accept a `context.Context` as their first argument.
+All store methods accept a `context.Context` as their first argument.
 
-**Why:** Context is the Go-idiomatic way to propagate deadlines, cancellation signals, and request-scoped values (such as trace IDs). Adding it later requires changing every call site. Adding it now costs nothing and means the codebase is ready for:
-- Per-request database timeouts
-- Graceful shutdown (cancel the context, all in-flight queries stop)
-- Distributed tracing (attach a span to the context, the store layer participates automatically)
+**Why:** Context is the Go-idiomatic way to propagate deadlines, cancellation signals, and request-scoped values (such as trace IDs). Adding it later requires changing every call site. Adding it now costs nothing and means the codebase is ready for per-request database timeouts, graceful shutdown, and distributed tracing.
 
 ---
 
 ### SQLite WAL mode and `busy_timeout`
 
-The database is opened with two pragmas beyond the defaults:
+The database is opened with:
 
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA busy_timeout = 5000;
 ```
 
-**Why:** SQLite's default rollback journal blocks all readers while a write is in progress. WAL (Write-Ahead Logging) allows concurrent reads during a write, which matters once the agent is also serving an HTTP API or exporting data while scanning. `busy_timeout` tells SQLite to wait up to 5 seconds for a lock rather than returning `SQLITE_BUSY` immediately, smoothing over brief write contention between goroutines.
+`SetMaxOpenConns(1)` is also set so the driver never opens a second connection.
 
-`SetMaxOpenConns(1)` is also set so the driver never opens a second connection — SQLite supports only one writer at a time, and serialising at the driver level is simpler than handling `SQLITE_BUSY` in application code.
+**Why:** WAL allows concurrent reads during a write, which matters once the agent is also serving health checks while scanning. `busy_timeout` tells SQLite to wait up to 5 seconds for a lock rather than returning `SQLITE_BUSY` immediately. Serialising connections at the driver level is simpler than handling `SQLITE_BUSY` in application code.
 
 ---
 
@@ -188,15 +295,23 @@ PRAGMA busy_timeout = 5000;
 PRAGMA foreign_keys = ON;
 ```
 
-**Why:** SQLite does not enforce foreign key constraints by default. Without this pragma, deleting a host would leave orphaned rows in the `ports` table indefinitely. Enabling it ensures referential integrity is maintained at the database level, which is a safety net that remains effective even when application-level delete logic has bugs.
+**Why:** SQLite does not enforce foreign key constraints by default. Without this pragma, deleting a host would leave orphaned rows in the `ports` table indefinitely. Enabling it ensures referential integrity is maintained at the database level — a safety net that works even when application-level delete logic has bugs.
+
+---
+
+### Human-readable durations in JSON config
+
+The custom `config.Duration` type unmarshals both string values (`"5m"`, `"30s"`) and raw nanosecond integers from JSON.
+
+**Why:** Raw nanosecond integers (`300000000000`) are unreadable in config files. String durations (`"5m"`) are immediately obvious. This wrapper keeps the rest of the codebase using `time.Duration` natively while making configs human-friendly.
 
 ---
 
 ### `cmd/` entry point structure
 
-The agent binary lives at `cmd/agent/main.go` rather than a root `main.go`.
+Agent binaries live under `cmd/<name>/main.go` rather than a root `main.go`.
 
-**Why:** A root `main.go` implies the repository is a single binary forever. `cmd/<name>/` is the idiomatic Go layout for projects that may grow multiple binaries — for example, a `cmd/server/` that exposes the inventory over HTTP, or a `cmd/export/` that dumps data to a SIEM. Adding a new binary later requires no restructuring.
+**Why:** A root `main.go` implies the repository is a single binary forever. `cmd/<name>/` is the idiomatic Go layout for projects that may grow multiple binaries. Adding a new binary requires no restructuring.
 
 ---
 
@@ -204,7 +319,7 @@ The agent binary lives at `cmd/agent/main.go` rather than a root `main.go`.
 
 All log output goes through `log/slog` from the Go standard library (Go 1.21+). The format is selectable between `text` (human-readable) and `json` (machine-readable) at runtime.
 
-**Why:** `fmt.Println` and `log.Printf` produce unstructured strings that are difficult to query, alert on, or ingest into log aggregation systems (Elasticsearch, Loki, CloudWatch, etc.). Structured logging with consistent field names means logs are queryable from day one. Using the stdlib package avoids a dependency and ensures any logging framework added later can wrap or replace it cleanly. JSON format is ready for container log drivers and log shippers without any pipeline changes.
+**Why:** Unstructured log strings are difficult to query, alert on, or ingest into log aggregation systems. Structured logging with consistent field names means logs are queryable from day one. Using the stdlib package avoids a dependency and ensures any logging framework added later can wrap or replace it cleanly.
 
 ---
 
@@ -212,7 +327,7 @@ All log output goes through `log/slog` from the Go standard library (Go 1.21+). 
 
 `main` creates a context that is cancelled on `SIGINT` or `SIGTERM` and passes it to all long-running operations.
 
-**Why:** A scanner loop that is killed mid-write can corrupt state or leave partial scan records. A context-aware shutdown gives in-flight operations the opportunity to finish cleanly before the process exits. This is essential for any agent that will eventually run under systemd, Kubernetes, or Docker with proper lifecycle management.
+**Why:** A scanner loop killed mid-write can corrupt state or leave partial scan records. A context-aware shutdown gives in-flight operations the opportunity to finish cleanly before the process exits. This is essential for any agent running under systemd, Kubernetes, or Docker with proper lifecycle management.
 
 ---
 
