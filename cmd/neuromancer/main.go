@@ -1,6 +1,9 @@
 // Neuromancer is one of two paired inventory agents. It listens for health
 // checks on :8081 and monitors its partner Wintermute on :8080.
 //
+// "The sky above the port was the color of television, tuned to a dead channel."
+// — William Gibson, Neuromancer (1984)
+//
 // Usage:
 //
 //	neuromancer [-config neuromancer.json]
@@ -35,6 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 	logging.Setup(cfg.Log)
+	slog.Debug("The sky above the port was the color of television, tuned to a dead channel.")
 
 	db, err := sqlite.Open(cfg.Database.Path)
 	if err != nil {

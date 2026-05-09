@@ -1,7 +1,7 @@
-# Compiled binaries
-wintermute
-neuromancer
-agent
+# Compiled binaries (root-level only)
+/wintermute
+/neuromancer
+/agent
 
 # SQLite databases
 *.db
