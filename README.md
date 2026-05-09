@@ -339,6 +339,24 @@ SQLite was chosen as the initial backing store.
 
 ---
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for the full OWASP Top 10 compliance table, operator hardening guidance, and how to report vulnerabilities.
+
+Summary of design decisions made for security:
+
+| OWASP | Mitigation |
+|-------|-----------|
+| A03 Injection | All SQL uses parameterized queries; scanner uses `net.Dialer`, never shell invocation |
+| A04 Insecure Design | `peer_addr` validated to `http`/`https` schemes only at config load |
+| A05 Misconfiguration | Default `health.addr` binds to `127.0.0.1` (loopback), not all interfaces |
+| A06 Vulnerable Components | Pure-Go dependencies; `go.sum` enforced; `govulncheck` required on dep PRs |
+| A08 Data Integrity | `go.sum` verifies all module downloads; config validated at startup |
+| A09 Logging | All three watchdog failure modes logged at WARN/ERROR with structured fields |
+| A10 SSRF | `peer_addr` scheme validated; peer HTTP responses capped at 1 MiB |
+
+The OWASP AI Top 10 is not applicable — this project contains no AI or ML components.
+
 ## Contributing
 
 Pull requests are welcome. Please open an issue first to discuss any significant changes.

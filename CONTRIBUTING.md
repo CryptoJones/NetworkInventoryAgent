@@ -114,6 +114,17 @@ go test -v ./internal/watchdog/...
 go test -race ./...
 ```
 
+### Vulnerability scanning
+
+Run `govulncheck` before opening a PR to check for known CVEs in dependencies (OWASP A06):
+
+```bash
+go install golang.org/x/vuln/cmd/govulncheck@latest
+govulncheck ./...
+```
+
+A clean `govulncheck` output is required for any PR that adds or updates a dependency.
+
 ### Writing tests
 
 - Place tests in `_test.go` files in the same package (use `package foo_test` for black-box tests).

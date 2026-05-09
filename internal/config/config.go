@@ -6,7 +6,9 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -59,7 +61,10 @@ type LogConfig struct {
 }
 
 type HealthConfig struct {
-	// Addr is the address the health HTTP server listens on (e.g. ":8080").
+	// Addr is the address the health HTTP server listens on.
+	// Default is 127.0.0.1:8080 (loopback only). Set to ":8080" or a specific
+	// interface address only when the network segment is trusted, as the
+	// endpoints are unauthenticated (OWASP A01/A05).
 	Addr string `json:"addr"`
 }
 
@@ -91,7 +96,10 @@ func Default() *Config {
 			Format: "text",
 		},
 		Health: HealthConfig{
-			Addr: ":8080",
+			// Loopback-only by default; operators must explicitly open this to
+			// other interfaces. Binding 0.0.0.0 would expose unauthenticated
+			// endpoints network-wide (OWASP A01/A05).
+			Addr: "127.0.0.1:8080",
 		},
 		Watchdog: WatchdogConfig{
 			Interval:        Duration{30 * time.Second},
@@ -119,7 +127,38 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyEnv(cfg)
+
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// validate checks config values that cannot be enforced by JSON unmarshalling.
+func (c *Config) validate() error {
+	if c.Watchdog.PeerAddr != "" {
+		if err := validatePeerAddr(c.Watchdog.PeerAddr); err != nil {
+			return fmt.Errorf("watchdog.peer_addr: %w", err)
+		}
+	}
+	return nil
+}
+
+// validatePeerAddr rejects peer_addr values whose scheme is not http or https,
+// preventing accidental SSRF via file://, ftp://, or other URI schemes (OWASP A10).
+func validatePeerAddr(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", raw, err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("scheme %q not allowed; must be http or https", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("missing host in %q", raw)
+	}
+	return nil
 }
 
 func applyEnv(cfg *Config) {
