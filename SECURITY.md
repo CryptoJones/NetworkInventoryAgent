@@ -8,7 +8,7 @@ Only the latest commit on `main` is actively maintained. There are no versioned 
 
 **Please do not report security vulnerabilities through public issue trackers, pull requests, or discussion threads.**
 
-Report vulnerabilities privately by emailing **akclark@ronin48.io**. Include as much of the following as possible:
+Report vulnerabilities privately by emailing **security@ronin48.io**. Include as much of the following as possible:
 
 - A description of the vulnerability and its potential impact
 - The affected component (e.g. health server, scanner, config loading)
