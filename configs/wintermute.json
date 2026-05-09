@@ -1,0 +1,23 @@
+{
+  "database": {
+    "path": "wintermute.db"
+  },
+  "scanner": {
+    "subnets": ["192.168.1.0/24"],
+    "scan_interval": "5m",
+    "timeout": "2s"
+  },
+  "log": {
+    "level": "info",
+    "format": "text"
+  },
+  "health": {
+    "addr": ":8080"
+  },
+  "watchdog": {
+    "peer_addr": "http://localhost:8081",
+    "interval": "30s",
+    "max_host_drift_pct": 50.0,
+    "max_failures": 3
+  }
+}
