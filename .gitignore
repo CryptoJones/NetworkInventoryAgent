@@ -1,0 +1,25 @@
+# Compiled binaries
+wintermute
+neuromancer
+agent
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# Config files with secrets
+*.local.json
+
+# Go build cache
+/vendor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
