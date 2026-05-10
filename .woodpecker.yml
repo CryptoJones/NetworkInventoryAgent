@@ -1,0 +1,20 @@
+steps:
+  build:
+    image: golang:1.21
+    commands:
+      - go build ./...
+
+  vet:
+    image: golang:1.21
+    commands:
+      - go vet ./...
+
+  fmt:
+    image: golang:1.21
+    commands:
+      - test -z "$(gofmt -l .)"
+
+  test:
+    image: golang:1.21
+    commands:
+      - go test -race -timeout 120s ./...

@@ -15,14 +15,14 @@ const maxStatusBytes = 1 << 20 // 1 MiB
 
 // Client fetches health and status from a peer agent's HTTP server.
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL    string
+	httpClient *http.Client
 }
 
 func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: baseURL,
-		http: &http.Client{
+		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
 	}
@@ -34,11 +34,12 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("peer returned status %d", resp.StatusCode)
 	}
@@ -51,7 +52,7 @@ func (c *Client) FetchStatus(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, fmt.Errorf("build request: %w", err)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return Status{}, fmt.Errorf("fetch status failed: %w", err)
 	}

@@ -5,6 +5,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -34,13 +35,17 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.Duration.String())
+}
+
 // Config is the top-level configuration object.
 type Config struct {
-	Database DatabaseConfig  `json:"database"`
-	Scanner  ScannerConfig   `json:"scanner"`
-	Log      LogConfig       `json:"log"`
-	Health   HealthConfig    `json:"health"`
-	Watchdog WatchdogConfig  `json:"watchdog"`
+	Database DatabaseConfig `json:"database"`
+	Scanner  ScannerConfig  `json:"scanner"`
+	Log      LogConfig      `json:"log"`
+	Health   HealthConfig   `json:"health"`
+	Watchdog WatchdogConfig `json:"watchdog"`
 }
 
 type DatabaseConfig struct {
@@ -53,6 +58,11 @@ type ScannerConfig struct {
 	Subnets      []string `json:"subnets"`
 	ScanInterval Duration `json:"scan_interval"`
 	Timeout      Duration `json:"timeout"`
+	// Workers is the number of concurrent probe goroutines per subnet scan.
+	Workers int `json:"workers"`
+	// MaxHosts is the maximum number of usable addresses allowed in a single
+	// subnet before the scan is rejected, preventing accidental /8 scans.
+	MaxHosts int `json:"max_hosts"`
 }
 
 type LogConfig struct {
@@ -88,8 +98,10 @@ func Default() *Config {
 			Path: "inventory.db",
 		},
 		Scanner: ScannerConfig{
-			ScanInterval: Duration{5 * time.Minute},
-			Timeout:      Duration{30 * time.Second},
+			ScanInterval: Duration{Duration: 5 * time.Minute},
+			Timeout:      Duration{Duration: 30 * time.Second},
+			Workers:      50,
+			MaxHosts:     65535,
 		},
 		Log: LogConfig{
 			Level:  "info",
@@ -102,7 +114,7 @@ func Default() *Config {
 			Addr: "127.0.0.1:8080",
 		},
 		Watchdog: WatchdogConfig{
-			Interval:        Duration{30 * time.Second},
+			Interval:        Duration{Duration: 30 * time.Second},
 			MaxHostDriftPct: 50.0,
 			MaxFailures:     3,
 		},
@@ -116,7 +128,7 @@ func Load(path string) (*Config, error) {
 	cfg := Default()
 
 	f, err := os.Open(path)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("open config %q: %w", path, err)
 	}
 	if err == nil {
@@ -136,6 +148,16 @@ func Load(path string) (*Config, error) {
 
 // validate checks config values that cannot be enforced by JSON unmarshalling.
 func (c *Config) validate() error {
+	switch c.Log.Level {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("log.level %q is not valid; must be debug, info, warn, or error", c.Log.Level)
+	}
+	switch c.Log.Format {
+	case "text", "json":
+	default:
+		return fmt.Errorf("log.format %q is not valid; must be text or json", c.Log.Format)
+	}
 	if c.Watchdog.PeerAddr != "" {
 		if err := validatePeerAddr(c.Watchdog.PeerAddr); err != nil {
 			return fmt.Errorf("watchdog.peer_addr: %w", err)
@@ -153,7 +175,7 @@ func validatePeerAddr(raw string) error {
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("scheme %q not allowed; must be http or https", u.Scheme)
+		return fmt.Errorf("scheme %q not allowed; must be http or https", scheme)
 	}
 	if u.Host == "" {
 		return fmt.Errorf("missing host in %q", raw)

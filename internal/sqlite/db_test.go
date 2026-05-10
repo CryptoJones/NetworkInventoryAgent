@@ -13,21 +13,21 @@ import (
 // All repo tests should use this helper for isolation and speed.
 func openTestDB(t *testing.T) *sqlite.DB {
 	t.Helper()
-	db, err := sqlite.Open(":memory:")
+	db, err := sqlite.Open(t.Context(), ":memory:")
 	require.NoError(t, err, "failed to open in-memory test database")
 	t.Cleanup(func() { db.Close() })
 	return db
 }
 
 func TestOpen_InMemory(t *testing.T) {
-	db, err := sqlite.Open(":memory:")
+	db, err := sqlite.Open(t.Context(), ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 }
 
 func TestOpen_FileDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
-	db, err := sqlite.Open(path)
+	db, err := sqlite.Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 }
@@ -42,6 +42,6 @@ func TestOpen_RunsMigrations(t *testing.T) {
 }
 
 func TestOpen_InvalidPath(t *testing.T) {
-	_, err := sqlite.Open("/this/directory/does/not/exist/db.sqlite")
+	_, err := sqlite.Open(t.Context(), "/this/directory/does/not/exist/db.sqlite")
 	require.Error(t, err)
 }

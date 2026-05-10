@@ -4,10 +4,12 @@
 package migrations
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
-	"sort"
+	"io/fs"
+	"slices"
 	"strings"
 )
 
@@ -15,8 +17,8 @@ import (
 var files embed.FS
 
 // Run applies all pending migrations in lexicographic order.
-func Run(db *sql.DB) error {
-	if _, err := db.Exec(`
+func Run(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT     PRIMARY KEY,
 			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -25,19 +27,19 @@ func Run(db *sql.DB) error {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	rows, err := db.Query(`SELECT version FROM schema_migrations`)
+	rows, err := db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
 	if err != nil {
 		return fmt.Errorf("query applied migrations: %w", err)
 	}
 	defer rows.Close()
 
-	applied := make(map[string]bool)
+	applied := make(map[string]struct{})
 	for rows.Next() {
 		var v string
 		if err := rows.Scan(&v); err != nil {
 			return fmt.Errorf("scan migration version: %w", err)
 		}
-		applied[v] = true
+		applied[v] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -47,13 +49,16 @@ func Run(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("read migrations directory: %w", err)
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
 	})
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasSuffix(name, ".sql") || applied[name] {
+		if !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+		if _, ok := applied[name]; ok {
 			continue
 		}
 
@@ -62,17 +67,17 @@ func Run(db *sql.DB) error {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
 
-		tx, err := db.Begin()
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin transaction for %s: %w", name, err)
 		}
 
-		if _, err := tx.Exec(string(content)); err != nil {
+		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
 
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO schema_migrations (version) VALUES (?)`, name,
 		); err != nil {
 			_ = tx.Rollback()
