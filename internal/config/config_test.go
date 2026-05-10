@@ -22,6 +22,12 @@ func TestDefault(t *testing.T) {
 	assert.Empty(t, cfg.Scanner.Subnets)
 }
 
+func TestDefault_ScannerConcurrencyFields(t *testing.T) {
+	cfg := config.Default()
+	assert.Equal(t, 50, cfg.Scanner.Workers, "default workers should be 50")
+	assert.Equal(t, 65535, cfg.Scanner.MaxHosts, "default max_hosts should be 65535")
+}
+
 func TestLoad_FileNotExist(t *testing.T) {
 	cfg, err := config.Load("/nonexistent/path/config.json")
 	require.NoError(t, err, "missing config file should return defaults, not an error")
@@ -52,6 +58,17 @@ func TestLoad_ValidFile(t *testing.T) {
 	assert.Equal(t, 60*time.Second, cfg.Scanner.Timeout.Duration)
 	assert.Equal(t, "debug", cfg.Log.Level)
 	assert.Equal(t, "json", cfg.Log.Format)
+}
+
+func TestLoad_ScannerConcurrencyFields(t *testing.T) {
+	data := map[string]any{
+		"scanner": map[string]any{"workers": 25, "max_hosts": 1024},
+		"log":     map[string]any{"level": "info", "format": "text"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, 25, cfg.Scanner.Workers)
+	assert.Equal(t, 1024, cfg.Scanner.MaxHosts)
 }
 
 func TestLoad_EnvOverrides(t *testing.T) {
@@ -92,6 +109,87 @@ func TestLoad_InvalidJSON(t *testing.T) {
 
 	_, err = config.Load(f.Name())
 	require.Error(t, err)
+}
+
+func TestLoad_InvalidLogLevel(t *testing.T) {
+	data := map[string]any{
+		"log": map[string]any{"level": "trace", "format": "text"},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "log.level")
+}
+
+func TestLoad_InvalidLogFormat(t *testing.T) {
+	data := map[string]any{
+		"log": map[string]any{"level": "info", "format": "yaml"},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "log.format")
+}
+
+func TestLoad_ValidPeerAddr_HTTP(t *testing.T) {
+	data := map[string]any{
+		"log":      map[string]any{"level": "info", "format": "text"},
+		"watchdog": map[string]any{"peer_addr": "http://localhost:8081"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "http://localhost:8081", cfg.Watchdog.PeerAddr)
+}
+
+func TestLoad_ValidPeerAddr_HTTPS(t *testing.T) {
+	data := map[string]any{
+		"log":      map[string]any{"level": "info", "format": "text"},
+		"watchdog": map[string]any{"peer_addr": "https://peer.example.com:8081"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "https://peer.example.com:8081", cfg.Watchdog.PeerAddr)
+}
+
+func TestLoad_InvalidPeerAddr_BadScheme(t *testing.T) {
+	data := map[string]any{
+		"log":      map[string]any{"level": "info", "format": "text"},
+		"watchdog": map[string]any{"peer_addr": "file:///etc/passwd"},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "peer_addr")
+}
+
+func TestLoad_InvalidPeerAddr_NoHost(t *testing.T) {
+	data := map[string]any{
+		"log":      map[string]any{"level": "info", "format": "text"},
+		"watchdog": map[string]any{"peer_addr": "http://"},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "peer_addr")
+}
+
+func TestDuration_UnmarshalJSON_String(t *testing.T) {
+	var d config.Duration
+	require.NoError(t, json.Unmarshal([]byte(`"5m"`), &d))
+	assert.Equal(t, 5*time.Minute, d.Duration)
+}
+
+func TestDuration_UnmarshalJSON_Integer(t *testing.T) {
+	var d config.Duration
+	require.NoError(t, json.Unmarshal([]byte(`30000000000`), &d))
+	assert.Equal(t, 30*time.Second, d.Duration)
+}
+
+func TestDuration_MarshalJSON_RoundTrip(t *testing.T) {
+	original := config.Duration{Duration: 5 * time.Minute}
+
+	b, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var restored config.Duration
+	require.NoError(t, json.Unmarshal(b, &restored))
+	assert.Equal(t, original.Duration, restored.Duration)
 }
 
 // writeTempConfig marshals data to a temp JSON file and returns its path.

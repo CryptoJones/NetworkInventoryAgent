@@ -18,10 +18,11 @@ Thank you for your interest in contributing. This document covers everything you
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.25 or later
 - Git
+- Docker and Docker Compose (optional, for container-based development)
 
-No other dependencies are required. The SQLite driver (`modernc.org/sqlite`) is pure Go and requires no C toolchain.
+No C toolchain is required. The SQLite driver (`modernc.org/sqlite`) is pure Go and builds with `CGO_ENABLED=0`.
 
 ### Clone and build
 
@@ -31,13 +32,32 @@ cd NetworkInventoryAgent
 go build ./...
 ```
 
+Or using `make`:
+
+```bash
+make build
+```
+
 ### Run the tests
 
 ```bash
-go test ./...
+make test
+# equivalent to: go test -race ./...
 ```
 
 All tests should pass before you begin making changes. If any fail on a clean checkout, please open an issue.
+
+### Docker development
+
+Build the image and start the Wintermute/Neuromancer pair:
+
+```bash
+make docker-up        # docker compose up --build -d
+make docker-logs      # tail combined logs
+make docker-down      # stop and remove containers
+```
+
+The Docker-specific configs live in `configs/*.docker.json`. They differ from the local configs in that `health.addr` binds to `0.0.0.0`, `watchdog.peer_addr` uses Compose service names, and `database.path` points to the `/data` volume.
 
 ---
 
@@ -65,14 +85,19 @@ All Go code must be formatted with `gofmt` before submission. Run:
 gofmt -w .
 ```
 
-A diff of any unformatted file will cause the review to be sent back.
+Or use the Makefile target which also fails the build on unformatted files:
+
+```bash
+make fmt
+```
 
 ### Linting
 
 Run `go vet` before submitting:
 
 ```bash
-go vet ./...
+make vet
+# equivalent to: go vet ./...
 ```
 
 ### Comments
@@ -95,7 +120,7 @@ Every function that performs I/O (database queries, HTTP requests, network dials
 
 - Keep the dependency count low. Prefer the standard library.
 - New dependencies require a clear justification in the pull request description.
-- No dependency should require CGo. The project must build with a pure Go toolchain.
+- No dependency should require CGo. The project must build with `CGO_ENABLED=0`.
 
 ---
 
@@ -104,14 +129,15 @@ Every function that performs I/O (database queries, HTTP requests, network dials
 ### Running tests
 
 ```bash
-# All packages
-go test ./...
+# All packages with race detector (required before opening a PR)
+make test
+# equivalent to: go test -race ./...
 
 # A single package with verbose output
 go test -v ./internal/watchdog/...
 
-# With the race detector (recommended before opening a PR)
-go test -race ./...
+# All packages without race detector (faster during development)
+go test ./...
 ```
 
 ### Vulnerability scanning
@@ -119,19 +145,20 @@ go test -race ./...
 Run `govulncheck` before opening a PR to check for known CVEs in dependencies (OWASP A06):
 
 ```bash
-go install golang.org/x/vuln/cmd/govulncheck@latest
-govulncheck ./...
+make vuln
+# equivalent to: govulncheck ./...
 ```
 
 A clean `govulncheck` output is required for any PR that adds or updates a dependency.
 
 ### Writing tests
 
-- Place tests in `_test.go` files in the same package (use `package foo_test` for black-box tests).
+- Place tests in `_test.go` files. Use `package foo_test` for black-box tests and `package foo` for white-box tests that need access to unexported symbols.
 - Use `github.com/stretchr/testify/assert` and `require` for assertions.
 - Database tests use an in-memory SQLite instance via the `openTestDB(t)` helper in `internal/sqlite/db_test.go` — do not write to the filesystem in tests.
 - HTTP server tests bind to `:0` (a random port) and extract the actual address after `Start()` — do not hardcode ports.
 - Tests must be hermetic: no shared global state, no dependency on external services, no reliance on execution order.
+- Scanner tests use in-memory mock stores — do not make real network connections in unit tests.
 
 ### Test coverage areas
 
@@ -142,8 +169,8 @@ When adding a new package or feature, tests should cover at minimum:
 | Store methods | Happy path, not-found, constraint violations |
 | HTTP endpoints | 200/503/correct JSON for each state |
 | Watchdog checks | Each of the three checks independently |
-| Config loading | Defaults, file override, env override, invalid input |
-| Scanner | CIDR parsing errors, context cancellation |
+| Config loading | Defaults, file override, env override, invalid input, new fields |
+| Scanner | CIDR parsing errors, max-hosts guard, context cancellation, network/broadcast skipping |
 
 ---
 
@@ -168,6 +195,7 @@ Before opening a PR, confirm:
 - [ ] `go test -race ./...` passes
 - [ ] `gofmt -l .` produces no output
 - [ ] `go vet ./...` produces no output
+- [ ] `docker build .` succeeds (if Dockerfile was changed)
 - [ ] New behaviour is covered by tests
 - [ ] Public APIs have doc comments
 - [ ] The PR addresses a single logical change
@@ -215,9 +243,10 @@ Feature requests are welcome. Describe the problem you are trying to solve, not 
 Before making structural changes, read the **Architecture decisions** section of the [README](README.md). The key constraints are:
 
 - **Store interfaces** — no code outside `internal/sqlite` may import `internal/sqlite` directly. All database access goes through the interfaces in `internal/store`.
-- **No CGo** — all dependencies must be pure Go.
+- **No CGo** — all dependencies must be pure Go and compile with `CGO_ENABLED=0`.
 - **Context everywhere** — all I/O functions accept and respect `context.Context`.
 - **Mutual watchdog** — Wintermute and Neuromancer are designed to run as a pair. Changes to the watchdog logic, the health server, or the `/status` response shape affect both agents.
 - **Schema migrations** — schema changes belong in a new numbered SQL file in `internal/sqlite/migrations/`. Do not modify existing migration files.
+- **Docker** — the `Dockerfile` and `docker-compose.yml` are first-class artifacts. Changes that affect runtime behaviour (ports, paths, config fields) must be reflected in the Docker configs under `configs/*.docker.json`.
 
 If a proposed change conflicts with one of these constraints, discuss it in an issue before investing time in an implementation.

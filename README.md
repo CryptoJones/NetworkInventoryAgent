@@ -10,18 +10,21 @@ The system is designed to run as **two cooperating agent instances** — named *
 
 ## Features
 
-- **Active discovery** — TCP-probe scanning across configurable CIDR ranges to find live hosts
+- **Active discovery** — concurrent TCP-probe scanning across configurable CIDR ranges to find live hosts
 - **Asset fingerprinting** — records IP address, open ports, services, OS fingerprint, vendor, and device type per host
 - **Continuous monitoring** — periodic re-scans detect new devices, removed devices, and configuration changes over time
 - **Mutual watchdog** — two agent instances cross-check each other for liveness, scan freshness, and inventory consistency
 - **Structured logging** — human-readable text or machine-readable JSON log output via `log/slog`
 - **Graceful shutdown** — SIGINT / SIGTERM cancel in-flight scans cleanly before exit
+- **Docker-ready** — single multi-stage image, `docker compose up` starts the full Wintermute/Neuromancer pair
 - **Low footprint** — no external server process; the database is a single SQLite file
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.25+
 - Network access to the target subnets
+
+No C toolchain is required. The SQLite driver (`modernc.org/sqlite`) is pure Go.
 
 ## Installation
 
@@ -32,12 +35,69 @@ go build -o wintermute  ./cmd/wintermute
 go build -o neuromancer ./cmd/neuromancer
 ```
 
-## Running the agents
+Or use `make`:
+
+```bash
+make build   # compiles all binaries
+make test    # runs the full test suite with the race detector
+make lint    # gofmt + go vet
+```
+
+## Docker
+
+The repository ships a multi-stage `Dockerfile` and a `docker-compose.yml` that runs the Wintermute/Neuromancer pair.
+
+### Quick start
+
+```bash
+docker compose up --build -d
+```
+
+This compiles both agent binaries in a `golang:1.25-bookworm` build stage and runs them in a minimal `alpine:3.20` image as a non-root user. Two containers start:
+
+| Container | Health port | Watchdog peer |
+|-----------|------------|---------------|
+| `wintermute` | `8080` | `http://neuromancer:8081` |
+| `neuromancer` | `8081` | `http://wintermute:8080` |
+
+Databases are written to named Docker volumes (`wintermute-db`, `neuromancer-db`) and persist across restarts.
+
+### Running a single agent
+
+```bash
+docker run -d \
+  -v "$PWD/configs/wintermute.docker.json:/etc/inventory/config.json:ro" \
+  -v inventorydata:/data \
+  -p 8080:8080 \
+  --entrypoint /usr/local/bin/wintermute \
+  networkinventoryagent -config /etc/inventory/config.json
+```
+
+### Make targets
+
+| Target | Description |
+|--------|-------------|
+| `make docker-build` | Build the image locally |
+| `make docker-up` | Start the Wintermute/Neuromancer pair in the background |
+| `make docker-down` | Stop and remove containers |
+| `make docker-logs` | Tail combined logs from both agents |
+
+### Docker-specific config
+
+The configs in `configs/*.docker.json` differ from the local configs in three ways:
+
+1. `health.addr` binds to `0.0.0.0:<port>` so Docker's network stack can route traffic into the container.
+2. `watchdog.peer_addr` uses the Compose service name (`http://neuromancer:8081`) instead of `localhost`.
+3. `database.path` writes to `/data/<name>.db` inside the mounted volume.
+
+Edit the `subnets` list in these files before deploying.
+
+## Running the agents locally
 
 Wintermute and Neuromancer are started independently, typically on the same host or two hosts on the same network segment. Each agent:
 
 1. Opens its own SQLite database
-2. Starts an HTTP health server (Wintermute on `:8080`, Neuromancer on `:8081`)
+2. Starts an HTTP health server (Wintermute on `127.0.0.1:8080`, Neuromancer on `127.0.0.1:8081`)
 3. Launches a watchdog goroutine pointed at its partner's health server
 4. Runs the scan loop in the foreground until it receives a signal
 
@@ -93,16 +153,18 @@ Each agent reads a JSON config file and then applies environment variable overri
     "path": "wintermute.db"
   },
   "scanner": {
-    "subnets": ["192.168.1.0/24", "10.0.0.0/8"],
+    "subnets": ["192.168.1.0/24", "10.0.0.0/24"],
     "scan_interval": "5m",
-    "timeout": "2s"
+    "timeout": "2s",
+    "workers": 50,
+    "max_hosts": 65535
   },
   "log": {
     "level": "info",
     "format": "text"
   },
   "health": {
-    "addr": ":8080"
+    "addr": "127.0.0.1:8080"
   },
   "watchdog": {
     "peer_addr": "http://localhost:8081",
@@ -119,9 +181,11 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `scanner.subnets` | `[]` | CIDR ranges to scan |
 | `scanner.scan_interval` | `5m` | How often to re-scan the network |
 | `scanner.timeout` | `30s` | Per-host TCP probe timeout |
+| `scanner.workers` | `50` | Concurrent probe goroutines per subnet scan |
+| `scanner.max_hosts` | `65535` | Maximum usable addresses per subnet; larger subnets are rejected |
 | `log.level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `log.format` | `text` | Log format: `text` (human) or `json` (machine) |
-| `health.addr` | `:8080` | Address the health HTTP server listens on |
+| `health.addr` | `127.0.0.1:8080` | Address the health HTTP server listens on |
 | `watchdog.peer_addr` | — | Base URL of the partner agent's health server |
 | `watchdog.interval` | `30s` | How often the watchdog checks the partner |
 | `watchdog.max_host_drift_pct` | `50.0` | Max % host-count difference before a warning |
@@ -163,24 +227,24 @@ Both agents expose two HTTP endpoints used by the watchdog and for external moni
 
 ```
 cmd/
-  agent/          Generic single-agent binary (scaffold / reference).
-  wintermute/     Wintermute entry point. Health server on :8080,
-                  watchdog pointed at Neuromancer on :8081.
-  neuromancer/    Neuromancer entry point. Health server on :8081,
-                  watchdog pointed at Wintermute on :8080.
+  agent/          Generic single-agent binary (no watchdog peer required).
+  wintermute/     Wintermute entry point. Watchdog pointed at Neuromancer.
+  neuromancer/    Neuromancer entry point. Watchdog pointed at Wintermute.
 
 configs/
-  wintermute.json  Ready-to-use config for Wintermute.
-  neuromancer.json Ready-to-use config for Neuromancer.
+  wintermute.json        Local config for Wintermute.
+  neuromancer.json       Local config for Neuromancer.
+  wintermute.docker.json Docker config for Wintermute (0.0.0.0 binding,
+                         service-name peer address, /data volume path).
+  neuromancer.docker.json Docker config for Neuromancer.
 
 models/           Pure domain types (Host, Port, Scan). No database
                   imports, no business logic — just structs.
 
 internal/
-  store/          Persistence interfaces (HostStore, PortStore,
-                  ScanStore) and sentinel errors (ErrNotFound,
-                  ErrDuplicate). The rest of the application depends
-                  only on these interfaces, never on a concrete DB.
+  store/          Persistence interfaces (HostStore, PortStore, ScanStore)
+                  and the ErrNotFound sentinel. The rest of the application
+                  depends only on these interfaces, never on a concrete DB.
 
   sqlite/         SQLite implementations of the store interfaces.
     migrations/   Versioned SQL files embedded into the binary at
@@ -191,7 +255,8 @@ internal/
 
   config/         Config loading: JSON file merged with environment
                   variable overrides. Custom Duration type supports
-                  human-readable strings ("5m") in JSON.
+                  human-readable strings ("5m") in JSON and marshals
+                  back to the same format.
 
   health/         Status type, concurrency-safe Tracker, HTTP server
                   (/health and /status endpoints), and HTTP client
@@ -202,16 +267,23 @@ internal/
                   on every tick. Logs warnings and errors; never
                   kills or restarts the peer process.
 
-  scanner/        TCP-probe network scanner. Iterates every IP in
-                  a CIDR range, dials a set of common ports, records
-                  live hosts and scan records in the store layer.
+  scanner/        Concurrent TCP-probe network scanner. Skips IPv4
+                  network and broadcast addresses. Enforces a
+                  configurable per-subnet host limit. Uses a worker
+                  pool (semaphore) to bound parallelism.
 
   agent/          Periodic scan loop. Drives the scanner across all
                   configured subnets, updates the health Tracker
-                  after each cycle, and blocks until context cancel.
+                  after each cycle with the total DB host count,
+                  and blocks until context cancel.
 
   logging/        Shared slog initialisation helper used by all
                   agent binaries.
+
+Dockerfile        Multi-stage build: golang:1.25-bookworm → alpine:3.20.
+                  Compiles all three binaries; runs as non-root user.
+docker-compose.yml Runs the Wintermute/Neuromancer pair with named
+                  volumes and Docker health checks.
 ```
 
 ## Architecture decisions
@@ -301,9 +373,19 @@ PRAGMA foreign_keys = ON;
 
 ### Human-readable durations in JSON config
 
-The custom `config.Duration` type unmarshals both string values (`"5m"`, `"30s"`) and raw nanosecond integers from JSON.
+The custom `config.Duration` type unmarshals both string values (`"5m"`, `"30s"`) and raw nanosecond integers from JSON, and marshals back to the string form.
 
 **Why:** Raw nanosecond integers (`300000000000`) are unreadable in config files. String durations (`"5m"`) are immediately obvious. This wrapper keeps the rest of the codebase using `time.Duration` natively while making configs human-friendly.
+
+---
+
+### Concurrent scanning with a worker pool
+
+The scanner uses a buffered channel as a semaphore to bound the number of concurrent TCP probe goroutines. The `workers` and `max_hosts` fields in `ScannerConfig` give operators control over resource consumption.
+
+**Why:** A naive sequential scanner is too slow on large subnets (/16 or larger). Unbounded goroutine creation risks exhausting file descriptors. A semaphore provides throughput without runaway resource use.
+
+IPv4 network and broadcast addresses (first and last in subnets with a prefix length of /30 or shorter) are skipped, matching RFC behaviour. /31 and /32 ranges are not skipped (RFC 3021).
 
 ---
 
@@ -359,7 +441,7 @@ The OWASP AI Top 10 is not applicable — this project contains no AI or ML comp
 
 ## Contributing
 
-Pull requests are welcome. Please open an issue first to discuss any significant changes.
+Pull requests are welcome. Please open an issue first to discuss any significant changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 
 ## License
 
