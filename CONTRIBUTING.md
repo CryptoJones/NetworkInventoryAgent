@@ -57,7 +57,7 @@ make docker-logs      # tail combined logs
 make docker-down      # stop and remove containers
 ```
 
-The Docker-specific configs live in `configs/*.docker.json`. They differ from the local configs in that `health.addr` binds to `0.0.0.0`, `watchdog.peer_addr` uses Compose service names, and `database.path` points to the `/data` volume.
+The Docker-specific configs live in `configs/*.docker.json`. They differ from the local configs in that `health.addr` and `admin.addr` bind to `0.0.0.0`, `watchdog.peer_addr` uses Compose service names, and `database.path` points to the `/data` volume. The admin console is accessible on host ports `9090` (wintermute) and `9091` (neuromancer) after `docker compose up`.
 
 ---
 
@@ -169,8 +169,9 @@ When adding a new package or feature, tests should cover at minimum:
 | Store methods | Happy path, not-found, constraint violations |
 | HTTP endpoints | 200/503/correct JSON for each state |
 | Watchdog checks | Each of the three checks independently |
-| Config loading | Defaults, file override, env override, invalid input, new fields |
+| Config loading | Defaults, file override, env override, invalid input, new fields (including `admin.addr`) |
 | Scanner | CIDR parsing errors, max-hosts guard, context cancellation, network/broadcast skipping |
+| Admin console | Each handler returns 200 with correct content-type; host-not-found returns 404; templates render without errors |
 
 ---
 
@@ -248,5 +249,6 @@ Before making structural changes, read the **Architecture decisions** section of
 - **Mutual watchdog** — Wintermute and Neuromancer are designed to run as a pair. Changes to the watchdog logic, the health server, or the `/status` response shape affect both agents.
 - **Schema migrations** — schema changes belong in a new numbered SQL file in `internal/sqlite/migrations/`. Do not modify existing migration files.
 - **Docker** — the `Dockerfile` and `docker-compose.yml` are first-class artifacts. Changes that affect runtime behaviour (ports, paths, config fields) must be reflected in the Docker configs under `configs/*.docker.json`.
+- **Admin console parity** — the web admin console (`internal/admin`) and the terminal UI console (`cmd/console/tui`) should expose equivalent information. Adding a new data field to one requires adding it to the other.
 
 If a proposed change conflicts with one of these constraints, discuss it in an issue before investing time in an implementation.
