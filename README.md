@@ -99,7 +99,59 @@ Edit the `subnets` list in these files before deploying.
 
 ## Running the agents locally
 
-Wintermute and Neuromancer are started independently, typically on the same host or two hosts on the same network segment. Each agent:
+### Quick start with the startup script
+
+The easiest way to run the agents locally is `start.sh`. It builds the binaries, optionally updates the subnet list in your config files, then starts the agents and prints the console URLs. Press `Ctrl+C` to stop everything cleanly.
+
+**Prerequisites:** Go 1.25+ and `jq` must be on your `PATH`.
+
+```bash
+# Interactive — prompts for mode and subnets
+./start.sh
+
+# Non-interactive examples
+./start.sh --mode paired     --subnet 192.168.1.0/24
+./start.sh --mode standalone --subnet 10.0.0.0/24 --subnet 10.1.0.0/24
+
+# Build binaries only, do not start agents
+./start.sh --build-only
+```
+
+#### Startup script options
+
+| Flag | Values | Description |
+|------|--------|-------------|
+| `-m`, `--mode` | `paired` \| `standalone` | Agent mode (default: interactive prompt) |
+| `-s`, `--subnet` | CIDR, e.g. `10.0.0.0/24` | Subnet to scan — repeat for multiple subnets |
+| `-b`, `--build-only` | — | Build binaries and exit without starting |
+| `-h`, `--help` | — | Show usage |
+
+**Paired mode** starts Wintermute and Neuromancer as a mutual-watchdog pair (recommended). **Standalone mode** starts a single agent with no watchdog peer.
+
+### Manual startup
+
+If you prefer to start the agents yourself, build and run them directly.
+
+**Requirements:** Go 1.25+. No C toolchain needed.
+
+Edit the `subnets` list in the relevant config file first, then:
+
+```bash
+# Build
+go build -o wintermute  ./cmd/wintermute
+go build -o neuromancer ./cmd/neuromancer
+go build -o agent       ./cmd/agent
+go build -o console     ./cmd/console
+
+# Paired mode (two terminals)
+./wintermute  -config configs/wintermute.json   # Terminal 1
+./neuromancer -config configs/neuromancer.json  # Terminal 2
+
+# Standalone mode
+./agent -config configs/agent.json
+```
+
+Each agent:
 
 1. Opens its own SQLite database
 2. Starts an HTTP health server (Wintermute on `127.0.0.1:8080`, Neuromancer on `127.0.0.1:8081`)
@@ -107,17 +159,7 @@ Wintermute and Neuromancer are started independently, typically on the same host
 4. Launches a watchdog goroutine pointed at its partner's health server
 5. Runs the scan loop in the foreground until it receives a signal
 
-```bash
-# Terminal 1 — Wintermute
-./wintermute -config configs/wintermute.json
-# Admin console: http://127.0.0.1:9090
-
-# Terminal 2 — Neuromancer
-./neuromancer -config configs/neuromancer.json
-# Admin console: http://127.0.0.1:9091
-```
-
-Ready-to-use configs are provided in `configs/`. Edit the `subnets` list before running.
+Ready-to-use configs are in `configs/`. Press `Ctrl+C` to stop an agent cleanly.
 
 ## Admin console
 
@@ -332,6 +374,10 @@ internal/
 
   logging/        Shared slog initialisation helper used by all
                   agent binaries.
+
+start.sh          Local startup script. Builds binaries, optionally
+                  updates subnet config, then starts the selected mode
+                  (paired or standalone). Ctrl+C stops all agents.
 
 Dockerfile        Multi-stage build: golang:1.25-bookworm → alpine:3.20.
                   Compiles all four binaries; runs as non-root user.

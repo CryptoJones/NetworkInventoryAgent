@@ -20,6 +20,7 @@ Thank you for your interest in contributing. This document covers everything you
 
 - Go 1.25 or later
 - Git
+- `jq` (required by `start.sh`; available via your system package manager)
 - Docker and Docker Compose (optional, for container-based development)
 
 No C toolchain is required. The SQLite driver (`modernc.org/sqlite`) is pure Go and builds with `CGO_ENABLED=0`.
@@ -37,6 +38,23 @@ Or using `make`:
 ```bash
 make build
 ```
+
+### Run locally with the startup script
+
+`start.sh` is the quickest way to get the agents running without Docker. It builds the binaries, updates your subnet config if needed, starts the agents, and prints the admin console URLs.
+
+```bash
+# Interactive — prompts for mode and subnets
+./start.sh
+
+# Non-interactive
+./start.sh --mode paired --subnet 192.168.1.0/24
+
+# Build binaries only (useful during development)
+./start.sh --build-only
+```
+
+See `./start.sh --help` or the [Running the agents locally](../README.md#running-the-agents-locally) section of the README for full options.
 
 ### Run the tests
 
