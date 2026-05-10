@@ -1,5 +1,6 @@
 // Neuromancer is one of two paired inventory agents. It listens for health
-// checks on :8081 and monitors its partner Wintermute on :8080.
+// checks on the address specified in its config and monitors its partner
+// Wintermute for liveness, freshness, and inventory consistency.
 //
 // "The sky above the port was the color of television, tuned to a dead channel."
 // — William Gibson, Neuromancer (1984)
@@ -40,12 +41,16 @@ func main() {
 	logging.Setup(cfg.Log)
 	slog.Debug("The sky above the port was the color of television, tuned to a dead channel.")
 
-	db, err := sqlite.Open(cfg.Database.Path)
+	db, err := sqlite.Open(context.Background(), cfg.Database.Path)
 	if err != nil {
 		slog.Error("failed to open database", "path", cfg.Database.Path, "err", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.Error("close database", "err", err)
+		}
+	}()
 
 	tracker := health.NewTracker(agentName)
 
@@ -77,5 +82,5 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("health server shutdown error", "err", err)
 	}
-	slog.Info(agentName + " stopped")
+	slog.Info("agent stopped", "name", agentName)
 }

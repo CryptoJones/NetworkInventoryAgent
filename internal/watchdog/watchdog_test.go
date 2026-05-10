@@ -65,11 +65,16 @@ func TestWatchdog_HealthyPeer(t *testing.T) {
 // TestWatchdog_PeerDown verifies that the watchdog handles a non-existent peer
 // gracefully (no panic, no hang).
 func TestWatchdog_PeerDown(t *testing.T) {
+	// Bind and immediately close a listener to get a guaranteed free port.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	ln.Close()
+
 	local := health.NewTracker("local")
-	// Port 19999 should not be bound in the test environment.
 	wd := watchdog.New(watchdog.Config{
 		Name:            "local",
-		PeerAddr:        "http://127.0.0.1:19999",
+		PeerAddr:        "http://" + addr,
 		Interval:        30 * time.Millisecond,
 		ScanInterval:    5 * time.Minute,
 		MaxHostDriftPct: 50.0,

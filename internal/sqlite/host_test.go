@@ -110,6 +110,24 @@ func TestHostRepo_List_OrderedByIP(t *testing.T) {
 	assert.Equal(t, "10.0.0.3", list[2].IPAddress)
 }
 
+func TestHostRepo_Count(t *testing.T) {
+	hosts := openTestDB(t).Hosts()
+	ctx := t.Context()
+
+	n, err := hosts.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "empty table should report zero hosts")
+
+	for _, ip := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"} {
+		_, err := hosts.Upsert(ctx, newTestHost(ip))
+		require.NoError(t, err)
+	}
+
+	n, err = hosts.Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+}
+
 func TestHostRepo_Delete(t *testing.T) {
 	hosts := openTestDB(t).Hosts()
 	ctx := t.Context()
@@ -131,7 +149,7 @@ func TestHostRepo_Delete_CascadesToPorts(t *testing.T) {
 	require.NoError(t, err)
 
 	err = db.Ports().Upsert(ctx, &models.Port{
-		HostID: hostID, Port: 80, Protocol: "tcp", Service: "http", State: "open",
+		HostID: hostID, Number: 80, Protocol: models.TCP, Service: "http", State: models.StateOpen,
 	})
 	require.NoError(t, err)
 

@@ -21,7 +21,7 @@ func openMemDB(t *testing.T) *sql.DB {
 
 func TestRun_CreatesSchemaTable(t *testing.T) {
 	db := openMemDB(t)
-	require.NoError(t, migrations.Run(db))
+	require.NoError(t, migrations.Run(t.Context(), db))
 
 	var count int
 	err := db.QueryRow(
@@ -33,7 +33,7 @@ func TestRun_CreatesSchemaTable(t *testing.T) {
 
 func TestRun_AppliesInitialMigration(t *testing.T) {
 	db := openMemDB(t)
-	require.NoError(t, migrations.Run(db))
+	require.NoError(t, migrations.Run(t.Context(), db))
 
 	for _, table := range []string{"hosts", "ports", "scans"} {
 		var count int
@@ -47,7 +47,7 @@ func TestRun_AppliesInitialMigration(t *testing.T) {
 
 func TestRun_RecordsMigrationVersion(t *testing.T) {
 	db := openMemDB(t)
-	require.NoError(t, migrations.Run(db))
+	require.NoError(t, migrations.Run(t.Context(), db))
 
 	var version string
 	err := db.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version)
@@ -57,8 +57,8 @@ func TestRun_RecordsMigrationVersion(t *testing.T) {
 
 func TestRun_Idempotent(t *testing.T) {
 	db := openMemDB(t)
-	require.NoError(t, migrations.Run(db), "first run should succeed")
-	require.NoError(t, migrations.Run(db), "second run should be a no-op, not an error")
+	require.NoError(t, migrations.Run(t.Context(), db), "first run should succeed")
+	require.NoError(t, migrations.Run(t.Context(), db), "second run should be a no-op, not an error")
 
 	var count int
 	err := db.QueryRow(`SELECT count() FROM schema_migrations`).Scan(&count)

@@ -18,6 +18,7 @@ import (
 type Agent struct {
 	name    string
 	cfg     config.ScannerConfig
+	hosts   store.HostStore
 	scanner *scanner.Scanner
 	tracker *health.Tracker
 }
@@ -34,7 +35,8 @@ func New(
 	return &Agent{
 		name:    name,
 		cfg:     cfg,
-		scanner: scanner.New(hosts, scans, cfg.Timeout.Duration),
+		hosts:   hosts,
+		scanner: scanner.New(hosts, scans, cfg.Timeout.Duration, cfg.Workers, cfg.MaxHosts),
 		tracker: tracker,
 	}
 }
@@ -63,7 +65,7 @@ func (a *Agent) Run(ctx context.Context) {
 
 func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	log.Info("scan cycle started", "subnets", len(a.cfg.Subnets))
-	total := 0
+	cycleHosts := 0
 	for _, subnet := range a.cfg.Subnets {
 		n, err := a.scanner.Scan(ctx, subnet)
 		if err != nil {
@@ -71,9 +73,17 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 			continue
 		}
 		log.Debug("subnet scanned", "subnet", subnet, "hosts", n)
-		total += n
+		cycleHosts += n
+	}
+
+	// Use the actual DB count so the tracker reflects total accumulated
+	// inventory, not just hosts found in this cycle.
+	total, err := a.hosts.Count(ctx)
+	if err != nil {
+		log.Warn("failed to count total hosts", "err", err)
+		total = cycleHosts
 	}
 	a.tracker.SetHostCount(total)
 	a.tracker.RecordScan()
-	log.Info("scan cycle complete", "total_hosts", total)
+	log.Info("scan cycle complete", "cycle_hosts", cycleHosts, "total_hosts", total)
 }

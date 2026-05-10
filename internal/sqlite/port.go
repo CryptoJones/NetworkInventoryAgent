@@ -26,9 +26,9 @@ func (r *PortRepo) Upsert(ctx context.Context, p *models.Port) error {
 			last_seen = CURRENT_TIMESTAMP`
 
 	if _, err := r.conn.ExecContext(ctx, q,
-		p.HostID, p.Port, p.Protocol, p.Service, p.State,
+		p.HostID, p.Number, string(p.Protocol), p.Service, string(p.State),
 	); err != nil {
-		return fmt.Errorf("upsert port %d/%s on host %d: %w", p.Port, p.Protocol, p.HostID, err)
+		return fmt.Errorf("upsert port %d/%s on host %d: %w", p.Number, p.Protocol, p.HostID, err)
 	}
 	return nil
 }
@@ -47,12 +47,15 @@ func (r *PortRepo) ListByHost(ctx context.Context, hostID int64) ([]*models.Port
 	var ports []*models.Port
 	for rows.Next() {
 		p := &models.Port{}
+		var protocol, state string
 		if err := rows.Scan(
-			&p.ID, &p.HostID, &p.Port, &p.Protocol,
-			&p.Service, &p.State, &p.FirstSeen, &p.LastSeen,
+			&p.ID, &p.HostID, &p.Number, &protocol,
+			&p.Service, &state, &p.FirstSeen, &p.LastSeen,
 		); err != nil {
 			return nil, fmt.Errorf("scan port row: %w", err)
 		}
+		p.Protocol = models.Protocol(protocol)
+		p.State = models.PortState(state)
 		ports = append(ports, p)
 	}
 	return ports, rows.Err()

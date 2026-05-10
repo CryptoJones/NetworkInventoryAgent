@@ -2,7 +2,5 @@ package store
 
 import "errors"
 
-var (
-	ErrNotFound  = errors.New("record not found")
-	ErrDuplicate = errors.New("record already exists")
-)
+// ErrNotFound is returned by Get methods when no record matches the query.
+var ErrNotFound = errors.New("record not found")

@@ -88,6 +88,14 @@ func (r *HostRepo) List(ctx context.Context) ([]*models.Host, error) {
 	return hosts, rows.Err()
 }
 
+func (r *HostRepo) Count(ctx context.Context) (int, error) {
+	var n int
+	if err := r.conn.QueryRowContext(ctx, `SELECT count(*) FROM hosts`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count hosts: %w", err)
+	}
+	return n, nil
+}
+
 func (r *HostRepo) Delete(ctx context.Context, id int64) error {
 	if _, err := r.conn.ExecContext(ctx, `DELETE FROM hosts WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete host %d: %w", id, err)

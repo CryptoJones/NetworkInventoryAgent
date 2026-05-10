@@ -33,9 +33,16 @@ func (r *ScanRepo) Create(ctx context.Context, s *models.Scan) (int64, error) {
 
 func (r *ScanRepo) Finish(ctx context.Context, id int64, hostsFound int, finishedAt time.Time) error {
 	const q = `UPDATE scans SET hosts_found = ?, finished_at = ? WHERE id = ?`
-	_, err := r.conn.ExecContext(ctx, q, hostsFound, finishedAt, id)
+	res, err := r.conn.ExecContext(ctx, q, hostsFound, finishedAt, id)
 	if err != nil {
 		return fmt.Errorf("finish scan %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("finish scan %d rows affected: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("finish scan %d: %w", id, store.ErrNotFound)
 	}
 	return nil
 }
@@ -58,7 +65,7 @@ func (r *ScanRepo) List(ctx context.Context) ([]*models.Scan, error) {
 		if err := rows.Scan(
 			&s.ID, &s.Subnet, &s.HostsFound, &s.StartedAt, &finishedAt,
 		); err != nil {
-			return nil, fmt.Errorf("scan scan row: %w", err)
+			return nil, fmt.Errorf("scan list row: %w", err)
 		}
 		if finishedAt.Valid {
 			s.FinishedAt = &finishedAt.Time
