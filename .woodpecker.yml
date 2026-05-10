@@ -1,20 +1,28 @@
 steps:
   build:
-    image: golang:1.21
+    image: golang:1.25
     commands:
       - go build ./...
 
   vet:
-    image: golang:1.21
+    image: golang:1.25
     commands:
       - go vet ./...
 
   fmt:
-    image: golang:1.21
+    image: golang:1.25
     commands:
       - test -z "$(gofmt -l .)"
 
   test:
-    image: golang:1.21
+    image: golang:1.25
     commands:
       - go test -race -timeout 120s ./...
+
+  docker:
+    image: plugins/docker
+    settings:
+      repo: networkinventoryagent
+      dry_run: true
+    when:
+      event: push
