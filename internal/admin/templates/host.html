@@ -1,0 +1,94 @@
+{{define "host"}}
+{{template "head" .}}
+<body>
+{{template "nav" .}}
+<main>
+  <a href="/hosts" class="back">← All Hosts</a>
+
+  <h1>{{.Host.IPAddress}}</h1>
+  <p class="subtitle">Host detail report</p>
+
+  <div class="host-meta">
+    <div class="meta-item">
+      <label>IP Address</label>
+      <span class="mono">{{.Host.IPAddress}}</span>
+    </div>
+    <div class="meta-item">
+      <label>Hostname</label>
+      <span>{{if .Host.Hostname}}{{.Host.Hostname}}{{else}}—{{end}}</span>
+    </div>
+    <div class="meta-item">
+      <label>MAC Address</label>
+      <span class="mono">{{if .Host.MACAddress}}{{.Host.MACAddress}}{{else}}—{{end}}</span>
+    </div>
+    <div class="meta-item">
+      <label>OS Fingerprint</label>
+      <span>{{if .Host.OSFingerprint}}{{.Host.OSFingerprint}}{{else}}—{{end}}</span>
+    </div>
+    <div class="meta-item">
+      <label>Vendor</label>
+      <span>{{if .Host.Vendor}}{{.Host.Vendor}}{{else}}—{{end}}</span>
+    </div>
+    <div class="meta-item">
+      <label>Device Type</label>
+      <span>{{if .Host.DeviceType}}{{.Host.DeviceType}}{{else}}—{{end}}</span>
+    </div>
+    <div class="meta-item">
+      <label>First Seen</label>
+      <span class="mono">{{formatTime .Host.FirstSeen}}</span>
+    </div>
+    <div class="meta-item">
+      <label>Last Seen</label>
+      <span class="mono">{{formatTime .Host.LastSeen}}</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Open Ports — {{len .Ports}} found</h2>
+    {{if .Ports}}
+    <table>
+      <thead>
+        <tr>
+          <th>Port</th>
+          <th>Protocol</th>
+          <th>Service</th>
+          <th>State</th>
+          <th>First Seen</th>
+          <th>Last Seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Ports}}
+        <tr>
+          <td class="mono" style="font-weight:600;color:#f0f6fc">{{.Number}}</td>
+          <td>
+            {{if eq (string .Protocol) "tcp"}}
+              <span class="badge badge-tcp">tcp</span>
+            {{else}}
+              <span class="badge badge-udp">udp</span>
+            {{end}}
+          </td>
+          <td>{{if .Service}}{{.Service}}{{else}}<span style="color:#6e7681">unknown</span>{{end}}</td>
+          <td>
+            {{if eq (string .State) "open"}}
+              <span class="badge badge-open">open</span>
+            {{else if eq (string .State) "filtered"}}
+              <span class="badge badge-filtered">filtered</span>
+            {{else}}
+              <span class="badge badge-closed">{{.State}}</span>
+            {{end}}
+          </td>
+          <td class="mono">{{formatTime .FirstSeen}}</td>
+          <td class="mono">{{formatTime .LastSeen}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty">No ports recorded for this host yet.</div>
+    {{end}}
+  </div>
+</main>
+</body>
+</html>
+{{end}}

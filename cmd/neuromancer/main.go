@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Ronin48/NetworkInventoryAgent/internal/admin"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/agent"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/config"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
@@ -61,6 +62,17 @@ func main() {
 	}
 	slog.Info("health server started", "addr", srv.Addr())
 
+	adminSrv, err := admin.NewServer(cfg.Admin.Addr, agentName, db.Hosts(), db.Ports(), db.Scans(), tracker.Get)
+	if err != nil {
+		slog.Error("failed to create admin server", "err", err)
+		os.Exit(1)
+	}
+	if err := adminSrv.Start(); err != nil {
+		slog.Error("failed to start admin server", "addr", cfg.Admin.Addr, "err", err)
+		os.Exit(1)
+	}
+	slog.Info("admin console started", "addr", adminSrv.Addr())
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -81,6 +93,9 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("health server shutdown error", "err", err)
+	}
+	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("admin server shutdown error", "err", err)
 	}
 	slog.Info("agent stopped", "name", agentName)
 }

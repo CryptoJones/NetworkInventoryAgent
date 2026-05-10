@@ -8,6 +8,7 @@ services:
       - ./configs/wintermute.docker.json:/etc/inventory/config.json:ro
     ports:
       - "8080:8080"
+      - "9090:9090"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
@@ -25,6 +26,7 @@ services:
       - ./configs/neuromancer.docker.json:/etc/inventory/config.json:ro
     ports:
       - "8081:8081"
+      - "9091:9090"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8081/health"]

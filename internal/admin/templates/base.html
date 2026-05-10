@@ -1,0 +1,73 @@
+{{define "head"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{.Title}} — NetworkInventoryAgent</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.5}
+a{color:#58a6ff;text-decoration:none}
+a:hover{text-decoration:underline}
+nav{background:#161b22;border-bottom:1px solid #30363d;padding:0 24px;height:48px;display:flex;align-items:center;gap:20px;position:sticky;top:0;z-index:10}
+.brand{font-weight:700;color:#f0f6fc;font-size:15px;margin-right:4px}
+.agent-badge{font-size:11px;font-weight:600;background:#1f3c2a;color:#3fb950;padding:2px 10px;border-radius:12px;margin-right:8px}
+nav a{color:#8b949e;font-size:13px;padding:4px 0}
+nav a:hover{color:#f0f6fc;text-decoration:none}
+.status-dot{margin-left:auto;font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px}
+.status-dot.healthy{color:#3fb950}
+.status-dot.unhealthy{color:#f85149}
+main{max-width:1280px;margin:0 auto;padding:28px 24px 64px}
+h1{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:4px}
+.subtitle{color:#8b949e;font-size:13px;margin-bottom:24px}
+h2{font-size:12px;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:32px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:16px 18px}
+.card-label{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.card-value{font-size:28px;font-weight:700;color:#f0f6fc;margin:4px 0 2px;line-height:1}
+.card-sub{color:#8b949e;font-size:11px;word-break:break-all}
+.section{margin-bottom:32px}
+.section-header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+.section-header a{font-size:12px}
+table{width:100%;border-collapse:collapse;background:#161b22;border:1px solid #30363d;border-radius:6px;overflow:hidden;font-size:13px}
+thead th{padding:9px 16px;text-align:left;color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:#21262d;border-bottom:1px solid #30363d;white-space:nowrap}
+tbody td{padding:9px 16px;border-bottom:1px solid #21262d;vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:#1c2128}
+.mono{font-family:"SF Mono","Fira Code",Consolas,monospace;font-size:12px}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-open{background:#1a3828;color:#3fb950}
+.badge-filtered{background:#382e1a;color:#d29922}
+.badge-closed{background:#2a1f1f;color:#6e7681}
+.badge-tcp{background:#1a2d48;color:#58a6ff}
+.badge-udp{background:#2a1a3c;color:#bc8cff}
+.badge-in-progress{background:#1f2d3c;color:#79c0ff}
+.badge-done{background:#1a2d1a;color:#56d364}
+.empty{color:#8b949e;text-align:center;padding:36px;font-style:italic}
+.back{display:inline-flex;align-items:center;gap:6px;margin-bottom:20px;font-size:13px;color:#8b949e}
+.back:hover{color:#f0f6fc;text-decoration:none}
+.host-meta{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:20px;margin-bottom:24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
+.meta-item label{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px}
+.meta-item span{color:#f0f6fc;font-size:13px}
+.meta-item span.mono{font-size:12px}
+.tag{display:inline-block;background:#21262d;color:#8b949e;padding:1px 8px;border-radius:4px;font-size:11px;margin-right:4px}
+.refresh-note{color:#8b949e;font-size:11px;text-align:right;margin-top:8px}
+</style>
+</head>
+{{end}}
+
+{{define "nav"}}
+<nav>
+  <span class="brand">NetworkInventoryAgent</span>
+  <span class="agent-badge">{{.AgentName}}</span>
+  <a href="/">Dashboard</a>
+  <a href="/hosts">Hosts</a>
+  <a href="/scans">Scans</a>
+  {{if .Healthy}}
+    <span class="status-dot healthy">● Healthy</span>
+  {{else}}
+    <span class="status-dot unhealthy">● Unhealthy</span>
+  {{end}}
+</nav>
+{{end}}

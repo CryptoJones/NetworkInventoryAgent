@@ -45,6 +45,7 @@ type Config struct {
 	Scanner  ScannerConfig  `json:"scanner"`
 	Log      LogConfig      `json:"log"`
 	Health   HealthConfig   `json:"health"`
+	Admin    AdminConfig    `json:"admin"`
 	Watchdog WatchdogConfig `json:"watchdog"`
 }
 
@@ -75,6 +76,13 @@ type HealthConfig struct {
 	// Default is 127.0.0.1:8080 (loopback only). Set to ":8080" or a specific
 	// interface address only when the network segment is trusted, as the
 	// endpoints are unauthenticated (OWASP A01/A05).
+	Addr string `json:"addr"`
+}
+
+type AdminConfig struct {
+	// Addr is the address the admin web console listens on.
+	// Default is 127.0.0.1:9090 (loopback only). Bind to 0.0.0.0 only in
+	// trusted network environments, as the console is unauthenticated (OWASP A01/A05).
 	Addr string `json:"addr"`
 }
 
@@ -112,6 +120,9 @@ func Default() *Config {
 			// other interfaces. Binding 0.0.0.0 would expose unauthenticated
 			// endpoints network-wide (OWASP A01/A05).
 			Addr: "127.0.0.1:8080",
+		},
+		Admin: AdminConfig{
+			Addr: "127.0.0.1:9090",
 		},
 		Watchdog: WatchdogConfig{
 			Interval:        Duration{Duration: 30 * time.Second},

@@ -1,0 +1,113 @@
+{{define "dashboard"}}
+{{template "head" .}}
+<body>
+{{template "nav" .}}
+<main>
+  <h1>Dashboard</h1>
+  <p class="subtitle">Live inventory summary — refreshes every 30 s</p>
+  <meta http-equiv="refresh" content="30">
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Total Hosts</div>
+      <div class="card-value">{{.HostCount}}</div>
+      <div class="card-sub">in inventory</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Scans Run</div>
+      <div class="card-value">{{.Status.ScanCount}}</div>
+      <div class="card-sub">since startup</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Last Scan</div>
+      <div class="card-value" style="font-size:16px;padding-top:6px">
+        {{if .Status.LastScanAt}}{{formatTime .Status.LastScanAt}}{{else}}—{{end}}
+      </div>
+      <div class="card-sub">UTC</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Agent Up Since</div>
+      <div class="card-value" style="font-size:16px;padding-top:6px">{{formatTime .Status.StartedAt}}</div>
+      <div class="card-sub">UTC</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <h2>Recent Scans</h2>
+      <a href="/scans">View all →</a>
+    </div>
+    {{if .RecentScans}}
+    <table>
+      <thead>
+        <tr>
+          <th>Subnet</th>
+          <th>Hosts Found</th>
+          <th>Started</th>
+          <th>Finished</th>
+          <th>Duration</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .RecentScans}}
+        <tr>
+          <td class="mono">{{.Subnet}}</td>
+          <td>{{.HostsFound}}</td>
+          <td class="mono">{{formatTime .StartedAt}}</td>
+          <td class="mono">{{formatTimePtr .FinishedAt}}</td>
+          <td>{{formatDuration .StartedAt .FinishedAt}}</td>
+          <td>
+            {{if .FinishedAt}}
+              <span class="badge badge-done">done</span>
+            {{else}}
+              <span class="badge badge-in-progress">in progress</span>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty">No scans recorded yet.</div>
+    {{end}}
+  </div>
+
+  <div class="section">
+    <div class="section-header">
+      <h2>Host Inventory</h2>
+      <a href="/hosts">View all →</a>
+    </div>
+    {{if .RecentHosts}}
+    <table>
+      <thead>
+        <tr>
+          <th>IP Address</th>
+          <th>Hostname</th>
+          <th>MAC</th>
+          <th>Vendor</th>
+          <th>Device Type</th>
+          <th>Last Seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .RecentHosts}}
+        <tr>
+          <td><a href="/hosts/{{.IPAddress}}" class="mono">{{.IPAddress}}</a></td>
+          <td>{{if .Hostname}}{{.Hostname}}{{else}}<span style="color:#6e7681">—</span>{{end}}</td>
+          <td class="mono">{{if .MACAddress}}{{.MACAddress}}{{else}}—{{end}}</td>
+          <td>{{if .Vendor}}{{.Vendor}}{{else}}—{{end}}</td>
+          <td>{{if .DeviceType}}<span class="tag">{{.DeviceType}}</span>{{else}}—{{end}}</td>
+          <td class="mono">{{formatTime .LastSeen}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty">No hosts discovered yet.</div>
+    {{end}}
+  </div>
+</main>
+</body>
+</html>
+{{end}}
