@@ -38,6 +38,25 @@ go build -o neuromancer ./cmd/neuromancer
 go build -o console     ./cmd/console
 ```
 
+### Windows Installation
+
+The project builds natively on Windows using the standard Go toolchain. You can either:
+- Use Git Bash/MSYS2/WSL to run the provided shell scripts
+- Or execute the equivalent commands manually in Command Prompt/PowerShell
+
+To build natively on Windows:
+```cmd
+go build -o wintermute.exe  ./cmd/wintermute
+go build -o neuromancer.exe ./cmd/neuromancer
+go build -o console.exe     ./cmd/console
+```
+
+For cross-compilation from Linux/macOS to Windows:
+```bash
+GOOS=windows GOARCH=amd64 go build -o wintermute.exe  ./cmd/wintermute
+GOOS=windows GOARCH=amd64 go build -o neuromancer.exe ./cmd/neuromancer
+```
+
 Or use `make`:
 
 ```bash

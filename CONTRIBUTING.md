@@ -22,8 +22,29 @@ Thank you for your interest in contributing. This document covers everything you
 - Git
 - `jq` (required by `start.sh`; available via your system package manager)
 - Docker and Docker Compose (optional, for container-based development)
+- **Windows-specific**: Git Bash, MSYS2, WSL, or similar for running shell scripts (or use manual commands)
 
 No C toolchain is required. The SQLite driver (`modernc.org/sqlite`) is pure Go and builds with `CGO_ENABLED=0`.
+
+### Windows Build Notes
+
+This project builds natively on Windows using the standard Go toolchain. You can either:
+- Use Git Bash/MSYS2/WSL to run the provided shell scripts (`start.sh`, Makefile targets)
+- Or execute the equivalent commands manually in Command Prompt/PowerShell
+
+To build natively on Windows:
+```cmd
+go build -o wintermute.exe  ./cmd/wintermute
+go build -o neuromancer.exe ./cmd/neuromancer
+go build -o agent.exe       ./cmd/agent
+go build -o console.exe     ./cmd/console
+```
+
+For cross-compilation from Linux/macOS to Windows:
+```bash
+GOOS=windows GOARCH=amd64 go build -o wintermute.exe  ./cmd/wintermute
+GOOS=windows GOARCH=amd64 go build -o neuromancer.exe ./cmd/neuromancer
+```
 
 ### Clone and build
 
