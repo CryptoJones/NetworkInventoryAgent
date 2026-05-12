@@ -36,7 +36,7 @@ func New(
 		name:    name,
 		cfg:     cfg,
 		hosts:   hosts,
-		scanner: scanner.New(hosts, scans, cfg.Timeout.Duration, cfg.Workers, cfg.MaxHosts),
+		scanner: scanner.New(hosts, scans, cfg.Timeout.Duration, cfg.Workers, cfg.MaxHosts, cfg.UsePing, cfg.PingTimeout.Duration),
 		tracker: tracker,
 	}
 }

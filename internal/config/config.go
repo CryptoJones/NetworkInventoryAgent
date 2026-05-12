@@ -45,6 +45,7 @@ type Config struct {
 	Scanner  ScannerConfig  `json:"scanner"`
 	Log      LogConfig      `json:"log"`
 	Health   HealthConfig   `json:"health"`
+	Web      WebConfig      `json:"web"`
 	Watchdog WatchdogConfig `json:"watchdog"`
 }
 
@@ -63,11 +64,28 @@ type ScannerConfig struct {
 	// MaxHosts is the maximum number of usable addresses allowed in a single
 	// subnet before the scan is rejected, preventing accidental /8 scans.
 	MaxHosts int `json:"max_hosts"`
+	// UsePing, when true, performs an ICMP echo sweep first and only TCP-probes
+	// hosts that respond to ping. Falls back to full TCP scan if ICMP is
+	// unavailable (e.g. no admin/root privileges).
+	UsePing bool `json:"use_ping"`
+	// PingTimeout is the per-host timeout for ICMP echo requests.
+	PingTimeout Duration `json:"ping_timeout"`
 }
 
 type LogConfig struct {
-	Level  string `json:"level"`  // debug | info | warn | error
-	Format string `json:"format"` // text | json
+	// Level is the log verbosity: none, standard, verbose, debug.
+	Level string `json:"level"`
+	// Format is the log format: text or json.
+	Format string `json:"format"`
+	// File is an optional path for disk-based logging. When empty, logs go
+	// to stdout.
+	File string `json:"file"`
+}
+
+type WebConfig struct {
+	// Addr is the address the web UI listens on.
+	// Default is 127.0.0.1:<year-specific> (loopback only).
+	Addr string `json:"addr"`
 }
 
 type HealthConfig struct {
@@ -100,18 +118,25 @@ func Default() *Config {
 		Scanner: ScannerConfig{
 			ScanInterval: Duration{Duration: 5 * time.Minute},
 			Timeout:      Duration{Duration: 30 * time.Second},
+			PingTimeout:  Duration{Duration: 2 * time.Second},
 			Workers:      50,
 			MaxHosts:     65535,
 		},
 		Log: LogConfig{
-			Level:  "info",
+			Level:  "standard",
 			Format: "text",
 		},
 		Health: HealthConfig{
 			// Loopback-only by default; operators must explicitly open this to
 			// other interfaces. Binding 0.0.0.0 would expose unauthenticated
 			// endpoints network-wide (OWASP A01/A05).
-			Addr: "127.0.0.1:8080",
+			// Port 2005: the year Wintermute was created (countdown, Neuromancer, 1984).
+			Addr: "127.0.0.1:2005",
+		},
+		Web: WebConfig{
+			// Loopback-only by default. Exposes the network inventory dashboard.
+			// Port 2052: the year the Turing regime falls (counting down in Neuromancer).
+			Addr: "127.0.0.1:2052",
 		},
 		Watchdog: WatchdogConfig{
 			Interval:        Duration{Duration: 30 * time.Second},
@@ -149,9 +174,9 @@ func Load(path string) (*Config, error) {
 // validate checks config values that cannot be enforced by JSON unmarshalling.
 func (c *Config) validate() error {
 	switch c.Log.Level {
-	case "debug", "info", "warn", "error":
+	case "none", "standard", "verbose", "debug":
 	default:
-		return fmt.Errorf("log.level %q is not valid; must be debug, info, warn, or error", c.Log.Level)
+		return fmt.Errorf("log.level %q is not valid; must be none, standard, verbose, or debug", c.Log.Level)
 	}
 	switch c.Log.Format {
 	case "text", "json":

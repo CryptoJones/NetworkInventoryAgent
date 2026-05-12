@@ -21,6 +21,7 @@ import (
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/logging"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/sqlite"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/web"
 )
 
 func main() {
@@ -54,6 +55,13 @@ func main() {
 	}
 	slog.Info("health server started", "addr", srv.Addr())
 
+	webSrv := web.NewServer(cfg.Web.Addr, db.Hosts(), db.Ports(), db.Scans(), tracker)
+	if err := webSrv.Start(); err != nil {
+		slog.Error("failed to start web server", "addr", cfg.Web.Addr, "err", err)
+		os.Exit(1)
+	}
+	slog.Info("web dashboard started", "addr", webSrv.Addr())
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -64,6 +72,9 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("health server shutdown error", "err", err)
+	}
+	if err := webSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("web server shutdown error", "err", err)
 	}
 	slog.Info("agent stopped")
 }

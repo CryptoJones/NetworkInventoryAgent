@@ -17,7 +17,7 @@ func TestDefault(t *testing.T) {
 	assert.Equal(t, "inventory.db", cfg.Database.Path)
 	assert.Equal(t, 5*time.Minute, cfg.Scanner.ScanInterval.Duration)
 	assert.Equal(t, 30*time.Second, cfg.Scanner.Timeout.Duration)
-	assert.Equal(t, "info", cfg.Log.Level)
+	assert.Equal(t, "standard", cfg.Log.Level)
 	assert.Equal(t, "text", cfg.Log.Format)
 	assert.Empty(t, cfg.Scanner.Subnets)
 }
@@ -63,7 +63,7 @@ func TestLoad_ValidFile(t *testing.T) {
 func TestLoad_ScannerConcurrencyFields(t *testing.T) {
 	data := map[string]any{
 		"scanner": map[string]any{"workers": 25, "max_hosts": 1024},
-		"log":     map[string]any{"level": "info", "format": "text"},
+		"log": map[string]any{"level": "standard", "format": "text"},
 	}
 	cfg, err := config.Load(writeTempConfig(t, data))
 	require.NoError(t, err)
@@ -73,14 +73,14 @@ func TestLoad_ScannerConcurrencyFields(t *testing.T) {
 
 func TestLoad_EnvOverrides(t *testing.T) {
 	t.Setenv("INVENTORY_DB_PATH", "/env/override.db")
-	t.Setenv("INVENTORY_LOG_LEVEL", "warn")
+	t.Setenv("INVENTORY_LOG_LEVEL", "verbose")
 	t.Setenv("INVENTORY_LOG_FORMAT", "json")
 
 	cfg, err := config.Load("/nonexistent/config.json")
 	require.NoError(t, err)
 
 	assert.Equal(t, "/env/override.db", cfg.Database.Path)
-	assert.Equal(t, "warn", cfg.Log.Level)
+	assert.Equal(t, "verbose", cfg.Log.Level)
 	assert.Equal(t, "json", cfg.Log.Format)
 }
 
@@ -122,16 +122,47 @@ func TestLoad_InvalidLogLevel(t *testing.T) {
 
 func TestLoad_InvalidLogFormat(t *testing.T) {
 	data := map[string]any{
-		"log": map[string]any{"level": "info", "format": "yaml"},
+		"log": map[string]any{"level": "standard", "format": "yaml"},
 	}
 	_, err := config.Load(writeTempConfig(t, data))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "log.format")
 }
 
+func TestLoad_LogLevelNone(t *testing.T) {
+	data := map[string]any{"log": map[string]any{"level": "none", "format": "text"}}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "none", cfg.Log.Level)
+}
+
+func TestLoad_LogLevelVerbose(t *testing.T) {
+	data := map[string]any{"log": map[string]any{"level": "verbose", "format": "text"}}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "verbose", cfg.Log.Level)
+}
+
+func TestLoad_LogFile(t *testing.T) {
+	data := map[string]any{"log": map[string]any{"level": "standard", "format": "text", "file": "/tmp/agent.log"}}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/agent.log", cfg.Log.File)
+}
+
+func TestDefault_WebConfig(t *testing.T) {
+	cfg := config.Default()
+	assert.Equal(t, "127.0.0.1:2052", cfg.Web.Addr, "default web port should be 2052")
+}
+
+func TestDefault_HealthPort(t *testing.T) {
+	cfg := config.Default()
+	assert.Equal(t, "127.0.0.1:2005", cfg.Health.Addr, "default health port should be 2005")
+}
+
 func TestLoad_ValidPeerAddr_HTTP(t *testing.T) {
 	data := map[string]any{
-		"log":      map[string]any{"level": "info", "format": "text"},
+		"log":      map[string]any{"level": "standard", "format": "text"},
 		"watchdog": map[string]any{"peer_addr": "http://localhost:8081"},
 	}
 	cfg, err := config.Load(writeTempConfig(t, data))
@@ -141,7 +172,7 @@ func TestLoad_ValidPeerAddr_HTTP(t *testing.T) {
 
 func TestLoad_ValidPeerAddr_HTTPS(t *testing.T) {
 	data := map[string]any{
-		"log":      map[string]any{"level": "info", "format": "text"},
+		"log":      map[string]any{"level": "standard", "format": "text"},
 		"watchdog": map[string]any{"peer_addr": "https://peer.example.com:8081"},
 	}
 	cfg, err := config.Load(writeTempConfig(t, data))
@@ -151,7 +182,7 @@ func TestLoad_ValidPeerAddr_HTTPS(t *testing.T) {
 
 func TestLoad_InvalidPeerAddr_BadScheme(t *testing.T) {
 	data := map[string]any{
-		"log":      map[string]any{"level": "info", "format": "text"},
+		"log":      map[string]any{"level": "standard", "format": "text"},
 		"watchdog": map[string]any{"peer_addr": "file:///etc/passwd"},
 	}
 	_, err := config.Load(writeTempConfig(t, data))
@@ -161,7 +192,7 @@ func TestLoad_InvalidPeerAddr_BadScheme(t *testing.T) {
 
 func TestLoad_InvalidPeerAddr_NoHost(t *testing.T) {
 	data := map[string]any{
-		"log":      map[string]any{"level": "info", "format": "text"},
+		"log":      map[string]any{"level": "standard", "format": "text"},
 		"watchdog": map[string]any{"peer_addr": "http://"},
 	}
 	_, err := config.Load(writeTempConfig(t, data))

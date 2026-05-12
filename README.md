@@ -11,10 +11,13 @@ The system is designed to run as **two cooperating agent instances** — named *
 ## Features
 
 - **Active discovery** — concurrent TCP-probe scanning across configurable CIDR ranges to find live hosts
+- **ICMP ping sweep** — fast host discovery via ICMP echo before TCP probing; falls back to full scan if raw sockets unavailable
+- **Expanded port coverage** — probes 30+ major service ports (SSH, HTTP, SMTP, DNS, RDP, databases, SMB, and more) per host
 - **Asset fingerprinting** — records IP address, open ports, services, OS fingerprint, vendor, and device type per host
 - **Continuous monitoring** — periodic re-scans detect new devices, removed devices, and configuration changes over time
 - **Mutual watchdog** — two agent instances cross-check each other for liveness, scan freshness, and inventory consistency
-- **Structured logging** — human-readable text or machine-readable JSON log output via `log/slog`
+- **Web dashboard** — each agent serves an HTTP UI showing the live inventory and scan status
+- **Configurable logging** — four verbosity levels (`none`, `standard`, `verbose`, `debug`) with optional text or JSON format and file output
 - **Graceful shutdown** — SIGINT / SIGTERM cancel in-flight scans cleanly before exit
 - **Docker-ready** — single multi-stage image, `docker compose up` starts the full Wintermute/Neuromancer pair
 - **Low footprint** — no external server process; the database is a single SQLite file
@@ -55,10 +58,12 @@ docker compose up --build -d
 
 This compiles both agent binaries in a `golang:1.25-bookworm` build stage and runs them in a minimal `alpine:3.20` image as a non-root user. Two containers start:
 
-| Container | Health port | Watchdog peer |
-|-----------|------------|---------------|
-| `wintermute` | `8080` | `http://neuromancer:8081` |
-| `neuromancer` | `8081` | `http://wintermute:8080` |
+| Container | Health port | Web UI port | Watchdog peer |
+|-----------|------------|-------------|---------------|
+| `wintermute` | `2005` | `2023` | `http://neuromancer:2037` |
+| `neuromancer` | `2037` | `2052` | `http://wintermute:2005` |
+
+All port defaults are Sprawl-trilogy timeline references: 2005 (Wintermute created), 2023 (Straylight construction), 2037 (Molly's mirrored eyes), 2052 (Turing regime falls).
 
 Databases are written to named Docker volumes (`wintermute-db`, `neuromancer-db`) and persist across restarts.
 
@@ -97,19 +102,26 @@ Edit the `subnets` list in these files before deploying.
 Wintermute and Neuromancer are started independently, typically on the same host or two hosts on the same network segment. Each agent:
 
 1. Opens its own SQLite database
-2. Starts an HTTP health server (Wintermute on `127.0.0.1:8080`, Neuromancer on `127.0.0.1:8081`)
-3. Launches a watchdog goroutine pointed at its partner's health server
-4. Runs the scan loop in the foreground until it receives a signal
+2. Starts an HTTP health server (Wintermute on `127.0.0.1:2005`, Neuromancer on `127.0.0.1:2037`)
+3. Launches a web dashboard (Wintermute on `127.0.0.1:2023`, Neuromancer on `127.0.0.1:2052`)
+4. Launches a watchdog goroutine pointed at its partner's health server
+5. Runs the scan loop in the foreground until it receives a signal
 
 ```bash
 # Terminal 1 — Wintermute
-./wintermute -config configs/wintermute.json
+./wintermute -config wintermute.conf.json
 
 # Terminal 2 — Neuromancer
-./neuromancer -config configs/neuromancer.json
+./neuromancer -config neuromancer.conf.json
 ```
 
-Ready-to-use configs are provided in `configs/`. Edit the `subnets` list before running.
+Alternatively, the standalone `agent` binary runs a single agent with no watchdog peer:
+
+```bash
+./agent -config config.json
+```
+
+Ready-to-use configs are provided at the repository root (`wintermute.conf.json`, `neuromancer.conf.json`, `config.json`). Edit the `subnets` list before running.
 
 ## How the mutual watchdog works
 
@@ -156,18 +168,24 @@ Each agent reads a JSON config file and then applies environment variable overri
     "subnets": ["192.168.1.0/24", "10.0.0.0/24"],
     "scan_interval": "5m",
     "timeout": "2s",
+    "use_ping": true,
+    "ping_timeout": "1s",
     "workers": 50,
     "max_hosts": 65535
   },
   "log": {
-    "level": "info",
-    "format": "text"
+    "level": "standard",
+    "format": "text",
+    "file": ""
   },
   "health": {
-    "addr": "127.0.0.1:8080"
+    "addr": "127.0.0.1:2005"
+  },
+  "web": {
+    "addr": "127.0.0.1:2023"
   },
   "watchdog": {
-    "peer_addr": "http://localhost:8081",
+    "peer_addr": "http://localhost:2037",
     "interval": "30s",
     "max_host_drift_pct": 50.0,
     "max_failures": 3
@@ -181,11 +199,15 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `scanner.subnets` | `[]` | CIDR ranges to scan |
 | `scanner.scan_interval` | `5m` | How often to re-scan the network |
 | `scanner.timeout` | `30s` | Per-host TCP probe timeout |
+| `scanner.use_ping` | `false` | Run ICMP ping sweep before TCP probing; falls back gracefully if raw sockets unavailable |
+| `scanner.ping_timeout` | `2s` | Per-host ICMP echo timeout when `use_ping` is enabled |
 | `scanner.workers` | `50` | Concurrent probe goroutines per subnet scan |
 | `scanner.max_hosts` | `65535` | Maximum usable addresses per subnet; larger subnets are rejected |
-| `log.level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `log.level` | `standard` | Log verbosity: `none` (silent), `standard` (info+), `verbose` (info + warn + scan details), `debug` (everything) |
 | `log.format` | `text` | Log format: `text` (human) or `json` (machine) |
-| `health.addr` | `127.0.0.1:8080` | Address the health HTTP server listens on |
+| `log.file` | — | Optional file path for disk-based logging; empty = stdout |
+| `health.addr` | `127.0.0.1:2005` (Wintermute) / `127.0.0.1:2037` (Neuromancer) | Health server address for watchdog liveness/freshness checks |
+| `web.addr` | `127.0.0.1:2023` (Wintermute) / `127.0.0.1:2052` (Neuromancer) | Web dashboard address; browser-accessible inventory UI |
 | `watchdog.peer_addr` | — | Base URL of the partner agent's health server |
 | `watchdog.interval` | `30s` | How often the watchdog checks the partner |
 | `watchdog.max_host_drift_pct` | `50.0` | Max % host-count difference before a warning |

@@ -11,13 +11,30 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ronin48/NetworkInventoryAgent/internal/ping"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/store"
 	"github.com/Ronin48/NetworkInventoryAgent/models"
 )
 
 // probePorts are the TCP ports tried in order; the first successful dial
-// confirms a host is live.
-var probePorts = []string{"22", "80", "443", "8080"}
+// confirms a host is live. Covers major services across web, database,
+// remote access, email, messaging, and common infrastructure.
+var probePorts = []string{
+	// Common web/proxy
+	"80", "443", "8080", "8443", "3128",
+	// Remote access
+	"22", "23", "3389", "5900",
+	// Email
+	"25", "110", "143", "465", "587", "993", "995",
+	// DNS
+	"53",
+	// File/DB
+	"21", "1433", "1521", "3306", "5432", "6379", "9200", "27017",
+	// Windows/SMB/LDAP/SNMP
+	"135", "139", "389", "445", "636", "161", "162",
+	// Developer/misc
+	"4444", "5000", "5433", "5984", "8000", "8888", "9090", "9418",
+}
 
 // Scanner probes subnets and records live hosts.
 type Scanner struct {
@@ -26,24 +43,33 @@ type Scanner struct {
 	timeout  time.Duration
 	workers  int
 	maxHosts int
+	usePing    bool
+	pingTimeout time.Duration
 }
 
 // New creates a Scanner backed by the supplied stores.
 // workers controls the number of concurrent probes per subnet (default 50).
 // maxHosts limits the number of usable addresses per subnet scan (default 65535).
-func New(hosts store.HostStore, scans store.ScanStore, timeout time.Duration, workers, maxHosts int) *Scanner {
+// usePing enables an ICMP echo sweep before TCP probing; pingTimeout sets the
+// per-host ICMP wait time.
+func New(hosts store.HostStore, scans store.ScanStore, timeout time.Duration, workers, maxHosts int, usePing bool, pingTimeout time.Duration) *Scanner {
 	if workers <= 0 {
 		workers = 50
 	}
 	if maxHosts <= 0 {
 		maxHosts = 65535
 	}
+	if pingTimeout <= 0 {
+		pingTimeout = 2 * time.Second
+	}
 	return &Scanner{
-		hosts:    hosts,
-		scans:    scans,
-		timeout:  timeout,
-		workers:  workers,
-		maxHosts: maxHosts,
+		hosts:       hosts,
+		scans:       scans,
+		timeout:     timeout,
+		workers:     workers,
+		maxHosts:    maxHosts,
+		usePing:     usePing,
+		pingTimeout: pingTimeout,
 	}
 }
 
@@ -65,6 +91,18 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 	scanID, err := s.scans.Create(ctx, &models.Scan{Subnet: subnet, StartedAt: startedAt})
 	if err != nil {
 		return 0, fmt.Errorf("create scan record: %w", err)
+	}
+
+	// If ping sweep is enabled, filter to only hosts that respond to ICMP.
+	// Falls back to full scan if raw ICMP sockets aren't available.
+	if s.usePing {
+		pinged, err := ping.Sweep(ctx, subnet, s.pingTimeout, s.workers)
+		if err != nil {
+			slog.Warn("ping sweep failed, falling back to TCP scan", "subnet", subnet, "err", err)
+		} else if pinged != nil {
+			slog.Info("ping sweep complete", "subnet", subnet, "pinged", len(pinged), "total", len(ips))
+			ips = pinged
+		}
 	}
 
 	var (

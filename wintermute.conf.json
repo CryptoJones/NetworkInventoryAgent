@@ -1,0 +1,21 @@
+{
+  "database": { "path": "wintermute.db" },
+  "scanner": {
+    "subnets": ["172.16.24.0/24"],
+    "scan_interval": "5m",
+    "timeout": "5s",
+    "ping_timeout": "1s",
+    "use_ping": true,
+    "workers": 128,
+    "max_hosts": 1024
+  },
+  "log": { "level": "standard", "format": "text" },
+  "health": { "addr": "127.0.0.1:2005" },
+  "web":   { "addr": "127.0.0.1:2023" },
+  "watchdog": {
+    "peer_addr": "http://127.0.0.1:2037",
+    "interval": "30s",
+    "max_host_drift_pct": 50.0,
+    "max_failures": 3
+  }
+}

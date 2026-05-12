@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.AgentName}} — Network Inventory</title>
+    <style>
+        :root {
+            --bg:      #0d1117;
+            --surface: #161b22;
+            --border:  #30363d;
+            --text:    #c9d1d9;
+            --muted:   #8b949e;
+            --accent:  #58a6ff;
+            --green:   #2ea043;
+            --red:     #f85149;
+            --orange:  #d29922;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 1.5rem;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .header h1 { font-size: 1.5rem; color: var(--accent); }
+        .badge {
+            display: inline-block;
+            padding: .25rem .75rem;
+            border-radius: 9999px;
+            font-size: .75rem;
+            font-weight: 600;
+        }
+        .badge.ok   { background: rgba(46,160,67,.15); color: var(--green); }
+        .badge.down  { background: rgba(248,81,73,.15); color: var(--red); }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .stat {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+        }
+        .stat .label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+        .stat .value { font-size: 1.75rem; font-weight: 700; margin-top: .25rem; }
+        .stat .value .accent { color: var(--accent); }
+        .section { margin-bottom: 2rem; }
+        .section h2 {
+            font-size: 1rem; margin-bottom: .75rem;
+            border-left: 3px solid var(--accent); padding-left: .5rem;
+        }
+        table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+        thead th {
+            text-align: left; padding: .5rem .75rem;
+            border-bottom: 2px solid var(--border);
+            color: var(--muted); font-weight: 600;
+            text-transform: uppercase; font-size: .7rem; letter-spacing: .05em;
+        }
+        tbody td { padding: .5rem .75rem; border-bottom: 1px solid var(--border); }
+        tbody tr:hover { background: var(--surface); }
+        .mono { font-family: 'SF Mono', Consolas, monospace; font-size: .8rem; }
+        .time { color: var(--muted); }
+        .tag {
+            display: inline-block;
+            padding: .15rem .5rem;
+            border-radius: 4px;
+            font-size: .7rem;
+            font-weight: 600;
+        }
+        .tag.blue   { background: rgba(88,166,255,.15); color: var(--accent); }
+        .tag.green  { background: rgba(46,160,67,.15); color: var(--green); }
+        .tag.orange { background: rgba(210,153,34,.15); color: var(--orange); }
+        .empty { color: var(--muted); font-style: italic; padding: 1rem 0; }
+        .footer {
+            margin-top: 2rem; padding-top: .75rem;
+            border-top: 1px solid var(--border);
+            font-size: .75rem; color: var(--muted); text-align: center;
+        }
+        .footer a { color: var(--accent); text-decoration: none; margin: 0 .5rem; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>&#9776; {{.AgentName}} — Network Inventory</h1>
+        {{if .Status.Healthy}}
+        <span class="badge ok">&#9679; Healthy</span>
+        {{else}}
+        <span class="badge down">&#9679; Unhealthy</span>
+        {{end}}
+    </div>
+
+    <div class="stats">
+        <div class="stat">
+            <div class="label">Hosts</div>
+            <div class="value accent">{{.Status.HostCount}}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Scans Completed</div>
+            <div class="value">{{.Status.ScanCount}}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Open Ports</div>
+            <div class="value">{{.TotalPorts}}</div>
+        </div>
+        <div class="stat">
+            <div class="label">Last Scan</div>
+            <div class="value" style="font-size:1.25rem">{{if .Status.LastScanAt}}{{.Status.LastScanAt.Format "15:04:05"}}{{else}}N/A{{end}}</div>
+        </div>
+    </div>
+
+    {{if .Hosts}}
+    <div class="section">
+        <h2>Discovered Hosts ({{len .Hosts}})</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>IP Address</th>
+                    <th>Hostname</th>
+                    <th>MAC</th>
+                    <th>OS</th>
+                    <th>Vendor</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Hosts}}
+                <tr>
+                    <td class="mono">{{.IPAddress}}</td>
+                    <td>{{if .Hostname}}{{.Hostname}}{{else}}<span class="time">—</span>{{end}}</td>
+                    <td class="mono">{{if .MACAddress}}{{.MACAddress}}{{else}}<span class="time">—</span>{{end}}</td>
+                    <td>{{if .OSFingerprint}}<span class="tag blue">{{.OSFingerprint}}</span>{{else}}<span class="time">—</span>{{end}}</td>
+                    <td>{{if .Vendor}}{{.Vendor}}{{else}}<span class="time">—</span>{{end}}</td>
+                    <td class="time">{{.FirstSeen.Format "Jan 2 15:04"}}</td>
+                    <td class="time">{{.LastSeen.Format "Jan 2 15:04"}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+
+    {{if .RecentScans}}
+    <div class="section">
+        <h2>Recent Scan History</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Subnet</th>
+                    <th>Hosts Found</th>
+                    <th>Started</th>
+                    <th>Finished</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .RecentScans}}
+                <tr>
+                    <td class="mono">{{.Subnet}}</td>
+                    <td>{{.HostsFound}}</td>
+                    <td class="time">{{.StartedAt.Format "Jan 2 15:04:05"}}</td>
+                    <td class="time">{{if .FinishedAt}}{{.FinishedAt.Format "15:04:05"}}{{else}}running{{end}}</td>
+                    <td>{{if .FinishedAt}}<span class="tag green">Done</span>{{else}}<span class="tag orange">Running</span>{{end}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+
+    <div class="footer">
+        NetworkInventoryAgent &middot;
+        <a href="/api/hosts">JSON hosts</a> &middot;
+        <a href="/api/status">Status</a> &middot;
+        <a href="/api/scans">Scans</a>
+    </div>
+
+    <script>setTimeout(() => location.reload(), 30000);</script>
+</body>
+</html>
