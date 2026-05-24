@@ -16,7 +16,7 @@ func TestDefault(t *testing.T) {
 
 	assert.Equal(t, "inventory.db", cfg.Database.Path)
 	assert.Equal(t, 5*time.Minute, cfg.Scanner.ScanInterval.Duration)
-	assert.Equal(t, 30*time.Second, cfg.Scanner.Timeout.Duration)
+	assert.Equal(t, 2*time.Second, cfg.Scanner.Timeout.Duration)
 	assert.Equal(t, "info", cfg.Log.Level)
 	assert.Equal(t, "text", cfg.Log.Format)
 	assert.Empty(t, cfg.Scanner.Subnets)
@@ -38,7 +38,7 @@ func TestLoad_FileNotExist(t *testing.T) {
 	require.NoError(t, err, "missing config file should return defaults, not an error")
 	assert.Equal(t, "inventory.db", cfg.Database.Path)
 	assert.Equal(t, 5*time.Minute, cfg.Scanner.ScanInterval.Duration)
-	assert.Equal(t, 30*time.Second, cfg.Scanner.Timeout.Duration)
+	assert.Equal(t, 2*time.Second, cfg.Scanner.Timeout.Duration)
 }
 
 func TestLoad_ValidFile(t *testing.T) {

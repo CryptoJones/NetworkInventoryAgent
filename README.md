@@ -283,7 +283,7 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `database.path` | `inventory.db` | SQLite database file. Use `:memory:` for tests. |
 | `scanner.subnets` | `[]` | CIDR ranges to scan |
 | `scanner.scan_interval` | `5m` | How often to re-scan the network |
-| `scanner.timeout` | `30s` | Per-host TCP probe timeout |
+| `scanner.timeout` | `2s` | Per-host TCP probe timeout (bounds the parallel probe across all ports) |
 | `scanner.workers` | `50` | Concurrent probe goroutines per subnet scan |
 | `scanner.max_hosts` | `65535` | Maximum usable addresses per subnet; larger subnets are rejected |
 | `log.level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |

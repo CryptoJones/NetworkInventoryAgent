@@ -17,6 +17,30 @@ _No unreleased changes._
 
 ---
 
+## 26.02 — 2026-05-24
+
+### Fixed
+
+- **Default scanner timeout lowered from 30 s to 2 s** and per-host
+  probing is now **concurrent across the 4 probe ports** instead of
+  sequential (Planning item #2). Together these change worst-case
+  per-host probe time from 4 × timeout ≈ 120 s to ≈ timeout (2 s),
+  which keeps a /24 sweep comfortably inside the default 5 min
+  `scan_interval`. The previous defaults caused the watchdog's
+  freshness check to fire continuously on any network with a
+  meaningful fraction of dead hosts.
+
+### Changed
+
+- `scanner.probe` fans out one goroutine per probe port and
+  short-circuits the remaining dials via context cancellation as
+  soon as the first port answers. Hosts with multiple open probe
+  ports may now record any one of them, not deterministically the
+  lowest-numbered.
+- README `scanner.timeout` row updated to reflect the new default.
+
+---
+
 ## 26.01 — 2026-05-24
 
 ### Fixed
