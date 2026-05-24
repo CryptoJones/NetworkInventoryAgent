@@ -16,6 +16,9 @@
   "health": {
     "addr": "0.0.0.0:8081"
   },
+  "admin": {
+    "addr": "0.0.0.0:9090"
+  },
   "watchdog": {
     "peer_addr": "http://wintermute:8080",
     "interval": "30s",

@@ -16,6 +16,9 @@
   "health": {
     "addr": "127.0.0.1:8080"
   },
+  "admin": {
+    "addr": "127.0.0.1:9090"
+  },
   "watchdog": {
     "peer_addr": "http://localhost:8081",
     "interval": "30s",

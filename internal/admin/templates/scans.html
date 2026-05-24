@@ -1,0 +1,50 @@
+{{define "scans"}}
+{{template "head" .}}
+<body>
+{{template "nav" .}}
+<main>
+  <h1>Scan History</h1>
+  <p class="subtitle">All subnet sweeps recorded by this agent, newest first</p>
+
+  {{if .Scans}}
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Subnet</th>
+        <th>Hosts Found</th>
+        <th>Started</th>
+        <th>Finished</th>
+        <th>Duration</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $i, $s := .Scans}}
+      <tr>
+        <td style="color:#6e7681">{{$s.ID}}</td>
+        <td class="mono">{{$s.Subnet}}</td>
+        <td style="font-weight:600;color:{{if gt $s.HostsFound 0}}#3fb950{{else}}#c9d1d9{{end}}">
+          {{$s.HostsFound}}
+        </td>
+        <td class="mono">{{formatTime $s.StartedAt}}</td>
+        <td class="mono">{{formatTimePtr $s.FinishedAt}}</td>
+        <td>{{formatDuration $s.StartedAt $s.FinishedAt}}</td>
+        <td>
+          {{if $s.FinishedAt}}
+            <span class="badge badge-done">done</span>
+          {{else}}
+            <span class="badge badge-in-progress">in progress</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">No scans recorded yet.</div>
+  {{end}}
+</main>
+</body>
+</html>
+{{end}}

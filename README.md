@@ -14,6 +14,8 @@ The system is designed to run as **two cooperating agent instances** — named *
 - **Asset fingerprinting** — records IP address, open ports, services, OS fingerprint, vendor, and device type per host
 - **Continuous monitoring** — periodic re-scans detect new devices, removed devices, and configuration changes over time
 - **Mutual watchdog** — two agent instances cross-check each other for liveness, scan freshness, and inventory consistency
+- **Web admin console** — dark-themed browser UI with dashboard, host inventory, per-host port detail, and scan history; auto-starts alongside each agent
+- **Terminal UI console** — full-featured Bubbletea TUI (`cmd/console`) providing the same views as the web console; connects directly to any agent's SQLite database
 - **Structured logging** — human-readable text or machine-readable JSON log output via `log/slog`
 - **Graceful shutdown** — SIGINT / SIGTERM cancel in-flight scans cleanly before exit
 - **Docker-ready** — single multi-stage image, `docker compose up` starts the full Wintermute/Neuromancer pair
@@ -33,6 +35,26 @@ git clone https://codeberg.org/Ronin48/NetworkInventoryAgent.git
 cd NetworkInventoryAgent
 go build -o wintermute  ./cmd/wintermute
 go build -o neuromancer ./cmd/neuromancer
+go build -o console     ./cmd/console
+```
+
+### Windows Installation
+
+The project builds natively on Windows using the standard Go toolchain. You can either:
+- Use Git Bash/MSYS2/WSL to run the provided shell scripts
+- Or execute the equivalent commands manually in Command Prompt/PowerShell
+
+To build natively on Windows:
+```cmd
+go build -o wintermute.exe  ./cmd/wintermute
+go build -o neuromancer.exe ./cmd/neuromancer
+go build -o console.exe     ./cmd/console
+```
+
+For cross-compilation from Linux/macOS to Windows:
+```bash
+GOOS=windows GOARCH=amd64 go build -o wintermute.exe  ./cmd/wintermute
+GOOS=windows GOARCH=amd64 go build -o neuromancer.exe ./cmd/neuromancer
 ```
 
 Or use `make`:
@@ -55,10 +77,10 @@ docker compose up --build -d
 
 This compiles both agent binaries in a `golang:1.25-bookworm` build stage and runs them in a minimal `alpine:3.20` image as a non-root user. Two containers start:
 
-| Container | Health port | Watchdog peer |
-|-----------|------------|---------------|
-| `wintermute` | `8080` | `http://neuromancer:8081` |
-| `neuromancer` | `8081` | `http://wintermute:8080` |
+| Container | Health port | Admin console | Watchdog peer |
+|-----------|------------|---------------|---------------|
+| `wintermute` | `8080` | `9090` | `http://neuromancer:8081` |
+| `neuromancer` | `8081` | `9091` | `http://wintermute:8080` |
 
 Databases are written to named Docker volumes (`wintermute-db`, `neuromancer-db`) and persist across restarts.
 
@@ -69,6 +91,7 @@ docker run -d \
   -v "$PWD/configs/wintermute.docker.json:/etc/inventory/config.json:ro" \
   -v inventorydata:/data \
   -p 8080:8080 \
+  -p 9090:9090 \
   --entrypoint /usr/local/bin/wintermute \
   networkinventoryagent -config /etc/inventory/config.json
 ```
@@ -84,32 +107,109 @@ docker run -d \
 
 ### Docker-specific config
 
-The configs in `configs/*.docker.json` differ from the local configs in three ways:
+The configs in `configs/*.docker.json` differ from the local configs in four ways:
 
 1. `health.addr` binds to `0.0.0.0:<port>` so Docker's network stack can route traffic into the container.
-2. `watchdog.peer_addr` uses the Compose service name (`http://neuromancer:8081`) instead of `localhost`.
-3. `database.path` writes to `/data/<name>.db` inside the mounted volume.
+2. `admin.addr` binds to `0.0.0.0:9090` so the admin console is reachable from the host.
+3. `watchdog.peer_addr` uses the Compose service name (`http://neuromancer:8081`) instead of `localhost`.
+4. `database.path` writes to `/data/<name>.db` inside the mounted volume.
 
 Edit the `subnets` list in these files before deploying.
 
 ## Running the agents locally
 
-Wintermute and Neuromancer are started independently, typically on the same host or two hosts on the same network segment. Each agent:
+### Quick start with the startup script
+
+The easiest way to run the agents locally is `start.sh`. It builds the binaries, optionally updates the subnet list in your config files, then starts the agents and prints the console URLs. Press `Ctrl+C` to stop everything cleanly.
+
+**Prerequisites:** Go 1.25+ and `jq` must be on your `PATH`.
+
+```bash
+# Interactive — prompts for mode and subnets
+./start.sh
+
+# Non-interactive examples
+./start.sh --mode paired     --subnet 192.168.1.0/24
+./start.sh --mode standalone --subnet 10.0.0.0/24 --subnet 10.1.0.0/24
+
+# Build binaries only, do not start agents
+./start.sh --build-only
+```
+
+#### Startup script options
+
+| Flag | Values | Description |
+|------|--------|-------------|
+| `-m`, `--mode` | `paired` \| `standalone` | Agent mode (default: interactive prompt) |
+| `-s`, `--subnet` | CIDR, e.g. `10.0.0.0/24` | Subnet to scan — repeat for multiple subnets |
+| `-b`, `--build-only` | — | Build binaries and exit without starting |
+| `-h`, `--help` | — | Show usage |
+
+**Paired mode** starts Wintermute and Neuromancer as a mutual-watchdog pair (recommended). **Standalone mode** starts a single agent with no watchdog peer.
+
+### Manual startup
+
+If you prefer to start the agents yourself, build and run them directly.
+
+**Requirements:** Go 1.25+. No C toolchain needed.
+
+Edit the `subnets` list in the relevant config file first, then:
+
+```bash
+# Build
+go build -o wintermute  ./cmd/wintermute
+go build -o neuromancer ./cmd/neuromancer
+go build -o agent       ./cmd/agent
+go build -o console     ./cmd/console
+
+# Paired mode (two terminals)
+./wintermute  -config configs/wintermute.json   # Terminal 1
+./neuromancer -config configs/neuromancer.json  # Terminal 2
+
+# Standalone mode
+./agent -config configs/agent.json
+```
+
+Each agent:
 
 1. Opens its own SQLite database
 2. Starts an HTTP health server (Wintermute on `127.0.0.1:8080`, Neuromancer on `127.0.0.1:8081`)
-3. Launches a watchdog goroutine pointed at its partner's health server
-4. Runs the scan loop in the foreground until it receives a signal
+3. Starts the web admin console (Wintermute on `127.0.0.1:9090`, Neuromancer on `127.0.0.1:9091`)
+4. Launches a watchdog goroutine pointed at its partner's health server
+5. Runs the scan loop in the foreground until it receives a signal
+
+Ready-to-use configs are in `configs/`. Press `Ctrl+C` to stop an agent cleanly.
+
+## Admin console
+
+Each agent automatically starts a browser-based admin console alongside the scan loop. The console does not require any additional setup — open the address logged at startup to explore the current inventory.
+
+### Web console
+
+| Page | URL | Description |
+|------|-----|-------------|
+| Dashboard | `/` | Summary cards and latest 10 scans and hosts; auto-refreshes every 30 s |
+| Host inventory | `/hosts` | Full list of all discovered hosts with metadata |
+| Host detail | `/hosts/{ip}` | Per-host metadata and open port table |
+| Scan history | `/scans` | All subnet sweeps with duration and status |
+
+### Terminal UI console
+
+The `console` binary connects directly to any agent's SQLite database and provides the same views in a Bubbletea TUI. It opens the database read-only so it is safe to run against a live agent's database file.
 
 ```bash
-# Terminal 1 — Wintermute
-./wintermute -config configs/wintermute.json
-
-# Terminal 2 — Neuromancer
-./neuromancer -config configs/neuromancer.json
+./console -db wintermute.db
 ```
 
-Ready-to-use configs are provided in `configs/`. Edit the `subnets` list before running.
+| Key | Action |
+|-----|--------|
+| `1` | Dashboard |
+| `2` | Host inventory |
+| `3` | Scan history |
+| `Enter` | Drill into host detail (ports) |
+| `Esc` / `Backspace` | Back to host list |
+| `r` | Refresh current view |
+| `q` / `Ctrl+C` | Quit |
 
 ## How the mutual watchdog works
 
@@ -166,6 +266,9 @@ Each agent reads a JSON config file and then applies environment variable overri
   "health": {
     "addr": "127.0.0.1:8080"
   },
+  "admin": {
+    "addr": "127.0.0.1:9090"
+  },
   "watchdog": {
     "peer_addr": "http://localhost:8081",
     "interval": "30s",
@@ -186,6 +289,7 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `log.level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `log.format` | `text` | Log format: `text` (human) or `json` (machine) |
 | `health.addr` | `127.0.0.1:8080` | Address the health HTTP server listens on |
+| `admin.addr` | `127.0.0.1:9090` | Address the web admin console listens on |
 | `watchdog.peer_addr` | — | Base URL of the partner agent's health server |
 | `watchdog.interval` | `30s` | How often the watchdog checks the partner |
 | `watchdog.max_host_drift_pct` | `50.0` | Max % host-count difference before a warning |
@@ -230,12 +334,15 @@ cmd/
   agent/          Generic single-agent binary (no watchdog peer required).
   wintermute/     Wintermute entry point. Watchdog pointed at Neuromancer.
   neuromancer/    Neuromancer entry point. Watchdog pointed at Wintermute.
+  console/        Interactive Bubbletea TUI console. Opens the SQLite
+                  database directly (read-only); no agent required.
+    tui/          TUI model, views, and lipgloss styles.
 
 configs/
-  wintermute.json        Local config for Wintermute.
-  neuromancer.json       Local config for Neuromancer.
-  wintermute.docker.json Docker config for Wintermute (0.0.0.0 binding,
-                         service-name peer address, /data volume path).
+  wintermute.json         Local config for Wintermute.
+  neuromancer.json        Local config for Neuromancer.
+  wintermute.docker.json  Docker config for Wintermute (0.0.0.0 binding,
+                          service-name peer address, /data volume path).
   neuromancer.docker.json Docker config for Neuromancer.
 
 models/           Pure domain types (Host, Port, Scan). No database
@@ -262,6 +369,13 @@ internal/
                   (/health and /status endpoints), and HTTP client
                   used by the watchdog to poll its partner.
 
+  admin/          Web admin console HTTP server. Parses embedded HTML
+                  templates at startup. Serves dashboard, host inventory,
+                  per-host port detail, and scan history pages.
+    templates/    Embedded HTML templates (Go text/template, GitHub-dark
+                  colour scheme). base.html defines the shared head and
+                  nav partials used by the four page templates.
+
   watchdog/       Watchdog loop: runs three checks (liveness,
                   freshness, consistency) against the partner agent
                   on every tick. Logs warnings and errors; never
@@ -280,10 +394,15 @@ internal/
   logging/        Shared slog initialisation helper used by all
                   agent binaries.
 
+start.sh          Local startup script. Builds binaries, optionally
+                  updates subnet config, then starts the selected mode
+                  (paired or standalone). Ctrl+C stops all agents.
+
 Dockerfile        Multi-stage build: golang:1.25-bookworm → alpine:3.20.
-                  Compiles all three binaries; runs as non-root user.
+                  Compiles all four binaries; runs as non-root user.
 docker-compose.yml Runs the Wintermute/Neuromancer pair with named
-                  volumes and Docker health checks.
+                  volumes and Docker health checks. Exposes admin
+                  console on ports 9090 (wintermute) and 9091 (neuromancer).
 ```
 
 ## Architecture decisions
@@ -429,9 +548,9 @@ Summary of design decisions made for security:
 
 | OWASP | Mitigation |
 |-------|-----------|
-| A03 Injection | All SQL uses parameterized queries; scanner uses `net.Dialer`, never shell invocation |
+| A03 Injection | All SQL uses parameterized queries; scanner uses `net.Dialer`, never shell invocation; admin console uses `html/template` (auto-escaped) |
 | A04 Insecure Design | `peer_addr` validated to `http`/`https` schemes only at config load |
-| A05 Misconfiguration | Default `health.addr` binds to `127.0.0.1` (loopback), not all interfaces |
+| A05 Misconfiguration | Default `health.addr` and `admin.addr` bind to `127.0.0.1` (loopback), not all interfaces |
 | A06 Vulnerable Components | Pure-Go dependencies; `go.sum` enforced; `govulncheck` required on dep PRs |
 | A08 Data Integrity | `go.sum` verifies all module downloads; config validated at startup |
 | A09 Logging | All three watchdog failure modes logged at WARN/ERROR with structured fields |
@@ -446,3 +565,5 @@ Pull requests are welcome. Please open an issue first to discuss any significant
 ## License
 
 [MIT](LICENSE)
+
+Proudly Made in Nebraska. Go Big Red! 🌽 https://xkcd.com/2347/

@@ -22,6 +22,11 @@ func TestDefault(t *testing.T) {
 	assert.Empty(t, cfg.Scanner.Subnets)
 }
 
+func TestDefault_AdminConfig(t *testing.T) {
+	cfg := config.Default()
+	assert.Equal(t, "127.0.0.1:9090", cfg.Admin.Addr, "default admin addr should be loopback-only")
+}
+
 func TestDefault_ScannerConcurrencyFields(t *testing.T) {
 	cfg := config.Default()
 	assert.Equal(t, 50, cfg.Scanner.Workers, "default workers should be 50")
@@ -58,6 +63,25 @@ func TestLoad_ValidFile(t *testing.T) {
 	assert.Equal(t, 60*time.Second, cfg.Scanner.Timeout.Duration)
 	assert.Equal(t, "debug", cfg.Log.Level)
 	assert.Equal(t, "json", cfg.Log.Format)
+}
+
+func TestLoad_AdminConfig(t *testing.T) {
+	data := map[string]any{
+		"log":   map[string]any{"level": "info", "format": "text"},
+		"admin": map[string]any{"addr": "0.0.0.0:9090"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "0.0.0.0:9090", cfg.Admin.Addr)
+}
+
+func TestLoad_AdminConfig_DefaultWhenOmitted(t *testing.T) {
+	data := map[string]any{
+		"log": map[string]any{"level": "info", "format": "text"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:9090", cfg.Admin.Addr, "omitting admin section should keep the default")
 }
 
 func TestLoad_ScannerConcurrencyFields(t *testing.T) {

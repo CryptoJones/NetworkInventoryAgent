@@ -16,6 +16,9 @@
   "health": {
     "addr": "0.0.0.0:8080"
   },
+  "admin": {
+    "addr": "0.0.0.0:9090"
+  },
   "watchdog": {
     "peer_addr": "http://neuromancer:8081",
     "interval": "30s",

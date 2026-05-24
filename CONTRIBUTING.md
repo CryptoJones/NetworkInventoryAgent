@@ -20,9 +20,31 @@ Thank you for your interest in contributing. This document covers everything you
 
 - Go 1.25 or later
 - Git
+- `jq` (required by `start.sh`; available via your system package manager)
 - Docker and Docker Compose (optional, for container-based development)
+- **Windows-specific**: Git Bash, MSYS2, WSL, or similar for running shell scripts (or use manual commands)
 
 No C toolchain is required. The SQLite driver (`modernc.org/sqlite`) is pure Go and builds with `CGO_ENABLED=0`.
+
+### Windows Build Notes
+
+This project builds natively on Windows using the standard Go toolchain. You can either:
+- Use Git Bash/MSYS2/WSL to run the provided shell scripts (`start.sh`, Makefile targets)
+- Or execute the equivalent commands manually in Command Prompt/PowerShell
+
+To build natively on Windows:
+```cmd
+go build -o wintermute.exe  ./cmd/wintermute
+go build -o neuromancer.exe ./cmd/neuromancer
+go build -o agent.exe       ./cmd/agent
+go build -o console.exe     ./cmd/console
+```
+
+For cross-compilation from Linux/macOS to Windows:
+```bash
+GOOS=windows GOARCH=amd64 go build -o wintermute.exe  ./cmd/wintermute
+GOOS=windows GOARCH=amd64 go build -o neuromancer.exe ./cmd/neuromancer
+```
 
 ### Clone and build
 
@@ -37,6 +59,23 @@ Or using `make`:
 ```bash
 make build
 ```
+
+### Run locally with the startup script
+
+`start.sh` is the quickest way to get the agents running without Docker. It builds the binaries, updates your subnet config if needed, starts the agents, and prints the admin console URLs.
+
+```bash
+# Interactive — prompts for mode and subnets
+./start.sh
+
+# Non-interactive
+./start.sh --mode paired --subnet 192.168.1.0/24
+
+# Build binaries only (useful during development)
+./start.sh --build-only
+```
+
+See `./start.sh --help` or the [Running the agents locally](../README.md#running-the-agents-locally) section of the README for full options.
 
 ### Run the tests
 
@@ -57,7 +96,7 @@ make docker-logs      # tail combined logs
 make docker-down      # stop and remove containers
 ```
 
-The Docker-specific configs live in `configs/*.docker.json`. They differ from the local configs in that `health.addr` binds to `0.0.0.0`, `watchdog.peer_addr` uses Compose service names, and `database.path` points to the `/data` volume.
+The Docker-specific configs live in `configs/*.docker.json`. They differ from the local configs in that `health.addr` and `admin.addr` bind to `0.0.0.0`, `watchdog.peer_addr` uses Compose service names, and `database.path` points to the `/data` volume. The admin console is accessible on host ports `9090` (wintermute) and `9091` (neuromancer) after `docker compose up`.
 
 ---
 
@@ -169,8 +208,9 @@ When adding a new package or feature, tests should cover at minimum:
 | Store methods | Happy path, not-found, constraint violations |
 | HTTP endpoints | 200/503/correct JSON for each state |
 | Watchdog checks | Each of the three checks independently |
-| Config loading | Defaults, file override, env override, invalid input, new fields |
+| Config loading | Defaults, file override, env override, invalid input, new fields (including `admin.addr`) |
 | Scanner | CIDR parsing errors, max-hosts guard, context cancellation, network/broadcast skipping |
+| Admin console | Each handler returns 200 with correct content-type; host-not-found returns 404; templates render without errors |
 
 ---
 
@@ -248,5 +288,6 @@ Before making structural changes, read the **Architecture decisions** section of
 - **Mutual watchdog** — Wintermute and Neuromancer are designed to run as a pair. Changes to the watchdog logic, the health server, or the `/status` response shape affect both agents.
 - **Schema migrations** — schema changes belong in a new numbered SQL file in `internal/sqlite/migrations/`. Do not modify existing migration files.
 - **Docker** — the `Dockerfile` and `docker-compose.yml` are first-class artifacts. Changes that affect runtime behaviour (ports, paths, config fields) must be reflected in the Docker configs under `configs/*.docker.json`.
+- **Admin console parity** — the web admin console (`internal/admin`) and the terminal UI console (`cmd/console/tui`) should expose equivalent information. Adding a new data field to one requires adding it to the other.
 
 If a proposed change conflicts with one of these constraints, discuss it in an issue before investing time in an implementation.
