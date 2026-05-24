@@ -565,3 +565,5 @@ Pull requests are welcome. Please open an issue first to discuss any significant
 ## License
 
 [MIT](LICENSE)
+
+Proudly Made in Nebraska. Go Big Red! 🌽 https://xkcd.com/2347/
