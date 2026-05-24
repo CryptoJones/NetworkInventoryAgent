@@ -29,6 +29,7 @@ func New(
 	name string,
 	cfg config.ScannerConfig,
 	hosts store.HostStore,
+	ports store.PortStore,
 	scans store.ScanStore,
 	tracker *health.Tracker,
 ) *Agent {
@@ -36,7 +37,7 @@ func New(
 		name:    name,
 		cfg:     cfg,
 		hosts:   hosts,
-		scanner: scanner.New(hosts, scans, cfg.Timeout.Duration, cfg.Workers, cfg.MaxHosts),
+		scanner: scanner.New(hosts, ports, scans, cfg.Timeout.Duration, cfg.Workers, cfg.MaxHosts),
 		tracker: tracker,
 	}
 }

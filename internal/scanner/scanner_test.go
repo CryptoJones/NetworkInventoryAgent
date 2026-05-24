@@ -2,6 +2,7 @@ package scanner_test
 
 import (
 	"context"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -123,9 +124,62 @@ func (m *mockScanStore) get(id int64) *models.Scan {
 	return m.scans[id]
 }
 
+// mockPortStore is an in-memory PortStore for tests.
+type mockPortStore struct {
+	mu     sync.Mutex
+	ports  []*models.Port
+	nextID int64
+}
+
+func newMockPortStore() *mockPortStore {
+	return &mockPortStore{}
+}
+
+func (m *mockPortStore) Upsert(_ context.Context, p *models.Port) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.ports {
+		if existing.HostID == p.HostID && existing.Number == p.Number && existing.Protocol == p.Protocol {
+			existing.State = p.State
+			existing.LastSeen = p.LastSeen
+			return nil
+		}
+	}
+	m.nextID++
+	clone := *p
+	clone.ID = m.nextID
+	m.ports = append(m.ports, &clone)
+	return nil
+}
+
+func (m *mockPortStore) ListByHost(_ context.Context, hostID int64) ([]*models.Port, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*models.Port
+	for _, p := range m.ports {
+		if p.HostID == hostID {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (m *mockPortStore) DeleteByHost(_ context.Context, hostID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.ports[:0]
+	for _, p := range m.ports {
+		if p.HostID != hostID {
+			kept = append(kept, p)
+		}
+	}
+	m.ports = kept
+	return nil
+}
+
 // newScanner returns a Scanner with a short dial timeout and modest limits.
 func newScanner(hosts *mockHostStore, scans *mockScanStore) *scanner.Scanner {
-	return scanner.New(hosts, scans, 10*time.Millisecond, 10, 65535)
+	return scanner.New(hosts, nil, scans, 10*time.Millisecond, 10, 65535)
 }
 
 // --- tests ---
@@ -139,7 +193,7 @@ func TestScanner_Scan_InvalidCIDR(t *testing.T) {
 
 func TestScanner_Scan_MaxHostsGuard(t *testing.T) {
 	// Limit to 5 hosts; /24 has 254 usable addresses — should be rejected immediately.
-	s := scanner.New(newMockHostStore(), newMockScanStore(), 10*time.Millisecond, 4, 5)
+	s := scanner.New(newMockHostStore(), nil, newMockScanStore(), 10*time.Millisecond, 4, 5)
 	_, err := s.Scan(t.Context(), "192.168.1.0/24")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds limit")
@@ -176,10 +230,54 @@ func TestScanner_Scan_CreatesAndFinishesScanRecord(t *testing.T) {
 	}
 }
 
+func TestScanner_Scan_PersistsOpenPort(t *testing.T) {
+	// Bind a TCP listener on one of the probe ports on 127.0.0.1 so the scan
+	// is guaranteed to find at least one open port. We bind 8080 — the lowest-
+	// privileged port in the probe set unlikely to clash with system services.
+	// If 8080 is in use the host's existing service plays the same role, and
+	// the test still passes as long as some probe port answers.
+	ln, err := net.Listen("tcp", "127.0.0.1:8080")
+	if err == nil {
+		defer ln.Close()
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				c.Close()
+			}
+		}()
+	}
+
+	hosts := newMockHostStore()
+	ports := newMockPortStore()
+	scans := newMockScanStore()
+	s := scanner.New(hosts, ports, scans, 500*time.Millisecond, 4, 65535)
+
+	n, err := s.Scan(t.Context(), "127.0.0.1/32")
+	require.NoError(t, err)
+	if n == 0 {
+		t.Skip("no probe port answered on 127.0.0.1; cannot exercise port persistence")
+	}
+	require.Equal(t, 1, n)
+
+	host, err := hosts.GetByIP(t.Context(), "127.0.0.1")
+	require.NoError(t, err)
+	stored, err := ports.ListByHost(t.Context(), host.ID)
+	require.NoError(t, err)
+	require.Len(t, stored, 1, "exactly one open port should be persisted")
+	assert.Contains(t, []int{22, 80, 443, 8080}, stored[0].Number,
+		"persisted port must come from the probe set")
+	assert.Equal(t, models.TCP, stored[0].Protocol)
+	assert.Equal(t, models.StateOpen, stored[0].State)
+	assert.Equal(t, host.ID, stored[0].HostID)
+}
+
 func TestScanner_Scan_DoesNotProbeNetworkOrBroadcast(t *testing.T) {
 	hosts := newMockHostStore()
 	// Scanner with 1-worker and tiny subnet; cancel right away so no real dials.
-	s := scanner.New(hosts, newMockScanStore(), time.Nanosecond, 1, 65535)
+	s := scanner.New(hosts, nil, newMockScanStore(), time.Nanosecond, 1, 65535)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

@@ -82,7 +82,7 @@ func main() {
 	}, tracker.Get)
 	go wd.Run(ctx)
 
-	a := agent.New(agentName, cfg.Scanner, db.Hosts(), db.Scans(), tracker)
+	a := agent.New(agentName, cfg.Scanner, db.Hosts(), db.Ports(), db.Scans(), tracker)
 	a.Run(ctx) // blocks until ctx cancelled
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

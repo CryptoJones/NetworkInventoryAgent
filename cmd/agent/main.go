@@ -69,7 +69,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	a := agent.New("agent", cfg.Scanner, db.Hosts(), db.Scans(), tracker)
+	a := agent.New("agent", cfg.Scanner, db.Hosts(), db.Ports(), db.Scans(), tracker)
 	a.Run(ctx) // blocks until ctx cancelled
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

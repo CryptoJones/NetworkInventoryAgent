@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -17,11 +18,12 @@ import (
 
 // probePorts are the TCP ports tried in order; the first successful dial
 // confirms a host is live.
-var probePorts = []string{"22", "80", "443", "8080"}
+var probePorts = []int{22, 80, 443, 8080}
 
 // Scanner probes subnets and records live hosts.
 type Scanner struct {
 	hosts    store.HostStore
+	ports    store.PortStore
 	scans    store.ScanStore
 	timeout  time.Duration
 	workers  int
@@ -31,7 +33,9 @@ type Scanner struct {
 // New creates a Scanner backed by the supplied stores.
 // workers controls the number of concurrent probes per subnet (default 50).
 // maxHosts limits the number of usable addresses per subnet scan (default 65535).
-func New(hosts store.HostStore, scans store.ScanStore, timeout time.Duration, workers, maxHosts int) *Scanner {
+// ports may be nil; if so, open ports discovered during liveness probing are
+// not persisted (liveness-only mode).
+func New(hosts store.HostStore, ports store.PortStore, scans store.ScanStore, timeout time.Duration, workers, maxHosts int) *Scanner {
 	if workers <= 0 {
 		workers = 50
 	}
@@ -40,6 +44,7 @@ func New(hosts store.HostStore, scans store.ScanStore, timeout time.Duration, wo
 	}
 	return &Scanner{
 		hosts:    hosts,
+		ports:    ports,
 		scans:    scans,
 		timeout:  timeout,
 		workers:  workers,
@@ -82,16 +87,30 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 		wg.Add(1)
 		go func(addr string) {
 			defer func() { <-sem; wg.Done() }()
-			if !s.probe(ctx, addr) {
+			openPort, ok := s.probe(ctx, addr)
+			if !ok {
 				return
 			}
-			if _, err := s.hosts.Upsert(ctx, &models.Host{
+			hostID, err := s.hosts.Upsert(ctx, &models.Host{
 				IPAddress: addr,
 				FirstSeen: startedAt,
 				LastSeen:  startedAt,
-			}); err != nil {
+			})
+			if err != nil {
 				slog.Warn("upsert host failed", "ip", addr, "err", err)
 				return
+			}
+			if s.ports != nil {
+				if err := s.ports.Upsert(ctx, &models.Port{
+					HostID:    hostID,
+					Number:    openPort,
+					Protocol:  models.TCP,
+					State:     models.StateOpen,
+					FirstSeen: startedAt,
+					LastSeen:  startedAt,
+				}); err != nil {
+					slog.Warn("upsert port failed", "ip", addr, "port", openPort, "err", err)
+				}
 			}
 			mu.Lock()
 			count++
@@ -107,17 +126,18 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 	return count, nil
 }
 
-// probe returns true if any of the standard probe ports are open on ip.
-func (s *Scanner) probe(ctx context.Context, ip string) bool {
+// probe tries each of the standard probe ports in order and returns the
+// first open port, or (0, false) if none answered.
+func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
 	d := net.Dialer{Timeout: s.timeout}
 	for _, port := range probePorts {
-		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, port))
+		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 		if err == nil {
 			conn.Close()
-			return true
+			return port, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 // usableIPs returns the set of host addresses in ipNet, skipping the network
