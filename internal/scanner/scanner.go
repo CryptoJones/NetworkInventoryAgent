@@ -3,12 +3,15 @@
 package scanner
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,39 +19,55 @@ import (
 	"github.com/Ronin48/NetworkInventoryAgent/models"
 )
 
-// probePorts are the TCP ports tried in order; the first successful dial
-// confirms a host is live.
-var probePorts = []int{22, 80, 443, 8080}
+// defaultProbePorts is used when ScannerConfig.ProbePorts is empty.
+var defaultProbePorts = []int{22, 80, 443, 8080}
 
 // Scanner probes subnets and records live hosts.
 type Scanner struct {
-	hosts    store.HostStore
-	ports    store.PortStore
-	scans    store.ScanStore
-	timeout  time.Duration
-	workers  int
-	maxHosts int
+	hosts      store.HostStore
+	ports      store.PortStore
+	scans      store.ScanStore
+	timeout    time.Duration
+	maxHosts   int
+	probePorts []int
+
+	// sem caps total concurrent probes across all subnets in a cycle. It is
+	// allocated once at construction so an operator with 20 subnets is not
+	// silently fanned out to 20×workers in-flight dials.
+	sem chan struct{}
 }
 
 // New creates a Scanner backed by the supplied stores.
-// workers controls the number of concurrent probes per subnet (default 50).
-// maxHosts limits the number of usable addresses per subnet scan (default 65535).
-// ports may be nil; if so, open ports discovered during liveness probing are
-// not persisted (liveness-only mode).
-func New(hosts store.HostStore, ports store.PortStore, scans store.ScanStore, timeout time.Duration, workers, maxHosts int) *Scanner {
+// workers controls the GLOBAL number of concurrent probes across all subnets
+// (default 50). maxHosts limits the number of usable addresses per subnet
+// scan (default 65535). probePorts may be nil; if so, the default port list
+// is used. ports may be nil; if so, open ports discovered during liveness
+// probing are not persisted (liveness-only mode).
+func New(
+	hosts store.HostStore,
+	ports store.PortStore,
+	scans store.ScanStore,
+	timeout time.Duration,
+	workers, maxHosts int,
+	probePorts []int,
+) *Scanner {
 	if workers <= 0 {
 		workers = 50
 	}
 	if maxHosts <= 0 {
 		maxHosts = 65535
 	}
+	if len(probePorts) == 0 {
+		probePorts = defaultProbePorts
+	}
 	return &Scanner{
-		hosts:    hosts,
-		ports:    ports,
-		scans:    scans,
-		timeout:  timeout,
-		workers:  workers,
-		maxHosts: maxHosts,
+		hosts:      hosts,
+		ports:      ports,
+		scans:      scans,
+		timeout:    timeout,
+		maxHosts:   maxHosts,
+		probePorts: probePorts,
+		sem:        make(chan struct{}, workers),
 	}
 }
 
@@ -59,6 +78,19 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 	_, ipNet, err := net.ParseCIDR(subnet)
 	if err != nil {
 		return 0, fmt.Errorf("parse CIDR %q: %w", subnet, err)
+	}
+
+	// Refuse oversized subnets BEFORE allocating the address slice. For
+	// IPv6 a /64 holds 2^64 addresses, so even the `len(ips) > maxHosts`
+	// check downstream is too late — the slice grows linearly inside
+	// usableIPs and exhausts memory long before the check trips.
+	ones, bits := ipNet.Mask.Size()
+	hostBits := uint(bits - ones)
+	if hostBits >= 31 {
+		return 0, fmt.Errorf("subnet %q has 2^%d addresses, exceeds limit of %d", subnet, hostBits, s.maxHosts)
+	}
+	if expected := 1 << hostBits; expected > s.maxHosts {
+		return 0, fmt.Errorf("subnet %q has %d addresses, exceeds limit of %d", subnet, expected, s.maxHosts)
 	}
 
 	ips := usableIPs(ipNet)
@@ -75,7 +107,6 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 	var (
 		mu    sync.Mutex
 		count int
-		sem   = make(chan struct{}, s.workers)
 		wg    sync.WaitGroup
 	)
 
@@ -83,19 +114,24 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 		if ctx.Err() != nil {
 			break
 		}
-		sem <- struct{}{}
+		s.sem <- struct{}{}
 		wg.Add(1)
 		go func(addr string) {
-			defer func() { <-sem; wg.Done() }()
+			defer func() { <-s.sem; wg.Done() }()
 			openPort, ok := s.probe(ctx, addr)
 			if !ok {
 				return
 			}
-			hostID, err := s.hosts.Upsert(ctx, &models.Host{
+			host := &models.Host{
 				IPAddress: addr,
+				Hostname:  reverseDNS(ctx, addr),
 				FirstSeen: startedAt,
 				LastSeen:  startedAt,
-			})
+			}
+			if fp := fingerprint(ctx, addr, openPort, s.timeout); fp != "" {
+				host.OSFingerprint = fp
+			}
+			hostID, err := s.hosts.Upsert(ctx, host)
 			if err != nil {
 				slog.Warn("upsert host failed", "ip", addr, "err", err)
 				return
@@ -126,7 +162,7 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 	return count, nil
 }
 
-// probe dials every standard probe port concurrently and returns the first
+// probe dials every configured probe port concurrently and returns the first
 // port that answers, or (0, false) if all dials fail within s.timeout.
 // Concurrent fan-out collapses worst-case latency from len(probePorts)*timeout
 // to ~1*timeout for dead hosts — the original sequential probe could keep a
@@ -139,10 +175,10 @@ func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
 		port int
 		ok   bool
 	}
-	results := make(chan result, len(probePorts))
+	results := make(chan result, len(s.probePorts))
 	d := net.Dialer{Timeout: s.timeout}
 
-	for _, port := range probePorts {
+	for _, port := range s.probePorts {
 		go func(port int) {
 			conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 			if err != nil {
@@ -155,7 +191,7 @@ func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
 	}
 
 	var firstOpen int
-	for range probePorts {
+	for range s.probePorts {
 		r := <-results
 		if r.ok && firstOpen == 0 {
 			firstOpen = r.port
@@ -166,6 +202,78 @@ func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
 		return 0, false
 	}
 	return firstOpen, true
+}
+
+// reverseDNS does a best-effort PTR lookup with a tight timeout. Returns an
+// empty string if anything fails — Hostname stays absent in the inventory
+// rather than being populated with a misleading value.
+func reverseDNS(ctx context.Context, ip string) string {
+	rctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	names, err := net.DefaultResolver.LookupAddr(rctx, ip)
+	if err != nil || len(names) == 0 {
+		return ""
+	}
+	return strings.TrimSuffix(names[0], ".")
+}
+
+// fingerprint is a best-effort banner grab for the port that answered the
+// liveness probe. For SSH (22) we read the first line of the protocol
+// greeting; for HTTP (80, 8080) we send a minimal HEAD request and capture
+// the Server header. Anything else, or any error, returns "" so the field
+// stays absent rather than misleadingly populated.
+func fingerprint(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	switch port {
+	case 22:
+		return sshBanner(ctx, ip, port, timeout)
+	case 80, 8080:
+		return httpServerHeader(ctx, ip, port, timeout, "http")
+	case 443:
+		// TLS handshake would be needed for 443; skip rather than dial
+		// twice. A future deep-probe pass can do this properly.
+		return ""
+	default:
+		return ""
+	}
+}
+
+func sshBanner(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return ""
+	}
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "SSH-") {
+		return ""
+	}
+	return line
+}
+
+func httpServerHeader(ctx context.Context, ip string, port int, timeout time.Duration, scheme string) string {
+	rctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(rctx, http.MethodHead,
+		fmt.Sprintf("%s://%s/", scheme, net.JoinHostPort(ip, strconv.Itoa(port))), nil)
+	if err != nil {
+		return ""
+	}
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if s := resp.Header.Get("Server"); s != "" {
+		return "HTTP: " + s
+	}
+	return ""
 }
 
 // usableIPs returns the set of host addresses in ipNet, skipping the network

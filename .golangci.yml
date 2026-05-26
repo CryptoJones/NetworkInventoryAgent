@@ -1,0 +1,36 @@
+# golangci-lint configuration for NetworkInventoryAgent.
+# Run locally with: golangci-lint run ./...
+# CI runs the same command via the `lint` step in .woodpecker.yml.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck       # catch unchecked errors
+    - govet          # vet, the bare minimum
+    - ineffassign    # assignments that are never used
+    - staticcheck    # broad static-analysis suite (includes gosimple, unused)
+    - bodyclose      # http.Response.Body must be closed
+    - errorlint      # %w vs %v misuse
+    - gocritic       # opinionated stylistic checks
+    - revive         # successor to golint
+  settings:
+    revive:
+      rules:
+        - name: var-naming
+        - name: package-comments
+        - name: exported
+          disabled: true # too noisy for a small project
+    errcheck:
+      exclude-functions:
+        - (net/http.ResponseWriter).Write  # template/JSON writes; we don't propagate write errors
+  exclusions:
+    rules:
+      # Tests use _ = result on purpose; let them.
+      - path: _test\.go
+        linters: [errcheck, gocritic]

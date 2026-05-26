@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -59,11 +60,22 @@ type ScannerConfig struct {
 	Subnets      []string `json:"subnets"`
 	ScanInterval Duration `json:"scan_interval"`
 	Timeout      Duration `json:"timeout"`
-	// Workers is the number of concurrent probe goroutines per subnet scan.
+	// Workers is the global cap on concurrent probe goroutines across all
+	// subnets in a cycle. Set this for the desired total parallelism, not
+	// per-subnet — an operator with 20 subnets used to get 20×Workers
+	// in-flight dials, which dwarfed the documented setting.
 	Workers int `json:"workers"`
 	// MaxHosts is the maximum number of usable addresses allowed in a single
 	// subnet before the scan is rejected, preventing accidental /8 scans.
 	MaxHosts int `json:"max_hosts"`
+	// ProbePorts is the list of TCP ports the scanner dials to confirm a
+	// host is live. Leaving it empty falls back to the historical default
+	// of [22, 80, 443, 8080].
+	ProbePorts []int `json:"probe_ports,omitempty"`
+	// HostTTL marks hosts not seen within this many scan intervals as
+	// stale. Zero disables pruning. Pruning runs at the end of each scan
+	// cycle and DELETEs rows where last_seen < now - HostTTL*ScanInterval.
+	HostTTL Duration `json:"host_ttl,omitempty"`
 }
 
 type LogConfig struct {
@@ -73,10 +85,15 @@ type LogConfig struct {
 
 type HealthConfig struct {
 	// Addr is the address the health HTTP server listens on.
-	// Default is 127.0.0.1:8080 (loopback only). Set to ":8080" or a specific
-	// interface address only when the network segment is trusted, as the
-	// endpoints are unauthenticated (OWASP A01/A05).
+	// Default is 127.0.0.1:8080 (loopback only). When bound off-loopback the
+	// agent refuses to start unless AuthToken is also set, because the
+	// /status endpoint leaks inventory size (OWASP A01/A05).
 	Addr string `json:"addr"`
+	// AuthToken is the shared bearer token required on /health and /status
+	// when Addr is not a loopback bind. The same value goes into the peer's
+	// watchdog.peer_token. Leave empty (and the file chmod 600) for the
+	// loopback-only default deployment.
+	AuthToken string `json:"auth_token,omitempty"`
 }
 
 type AdminConfig struct {
@@ -89,8 +106,11 @@ type AdminConfig struct {
 type WatchdogConfig struct {
 	// PeerAddr is the base URL of the peer agent's health server
 	// (e.g. "http://localhost:8081").
-	PeerAddr string   `json:"peer_addr"`
-	Interval Duration `json:"interval"`
+	PeerAddr string `json:"peer_addr"`
+	// PeerToken is the bearer token sent on every probe of PeerAddr. Must
+	// match the peer's health.auth_token. Empty when peer is on loopback.
+	PeerToken string   `json:"peer_token,omitempty"`
+	Interval  Duration `json:"interval"`
 	// MaxHostDriftPct is the maximum acceptable percentage difference between
 	// this agent's host count and the peer's before a warning is raised.
 	MaxHostDriftPct float64 `json:"max_host_drift_pct"`
@@ -138,12 +158,19 @@ func Default() *Config {
 func Load(path string) (*Config, error) {
 	cfg := Default()
 
+	var fileMode os.FileMode
+	var loaded bool
+
 	f, err := os.Open(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("open config %q: %w", path, err)
 	}
 	if err == nil {
 		defer f.Close()
+		if info, statErr := f.Stat(); statErr == nil {
+			fileMode = info.Mode().Perm()
+			loaded = true
+		}
 		if err := json.NewDecoder(f).Decode(cfg); err != nil {
 			return nil, fmt.Errorf("decode config %q: %w", path, err)
 		}
@@ -154,7 +181,26 @@ func Load(path string) (*Config, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
+	if loaded {
+		if err := cfg.checkSecretsPerm(path, fileMode); err != nil {
+			return nil, err
+		}
+	}
 	return cfg, nil
+}
+
+// checkSecretsPerm refuses to start when a config file containing a bearer
+// token is readable by group or other. The SECURITY.md advice is chmod 600;
+// catching this at startup beats discovering it after a token leak.
+func (c *Config) checkSecretsPerm(path string, mode os.FileMode) error {
+	hasSecret := c.Health.AuthToken != "" || c.Watchdog.PeerToken != ""
+	if !hasSecret {
+		return nil
+	}
+	if mode&0o077 == 0 {
+		return nil
+	}
+	return fmt.Errorf("config %q has mode %o but contains a bearer token; chmod 600 it (or remove the token if running loopback-only)", path, mode)
 }
 
 // validate checks config values that cannot be enforced by JSON unmarshalling.
@@ -174,7 +220,30 @@ func (c *Config) validate() error {
 			return fmt.Errorf("watchdog.peer_addr: %w", err)
 		}
 	}
+	if !isLoopbackBind(c.Health.Addr) && c.Health.AuthToken == "" {
+		return fmt.Errorf("health.addr %q is not loopback; set health.auth_token to gate /health and /status (the endpoints expose host counts; binding off-loopback without a token is OWASP A01/A05)", c.Health.Addr)
+	}
 	return nil
+}
+
+// isLoopbackBind reports whether addr listens only on a loopback interface.
+// Empty/wildcard binds (":8080", "0.0.0.0:8080", "[::]:8080") are NOT
+// loopback. Anything else is checked against net.ParseIP.IsLoopback so
+// IPv6 ::1 is handled correctly.
+func isLoopbackBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "" {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Hostname — accept "localhost" as loopback, treat anything else as not.
+		return strings.EqualFold(host, "localhost")
+	}
+	return ip.IsLoopback()
 }
 
 // validatePeerAddr rejects peer_addr values whose scheme is not http or https,
@@ -203,5 +272,14 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("INVENTORY_LOG_FORMAT"); v != "" {
 		cfg.Log.Format = v
+	}
+	// Tokens preferentially come from the environment so the JSON file can
+	// stay world-readable when only loopback binds are used. Setting these
+	// in env also avoids the secrets-in-git footgun.
+	if v := os.Getenv("INVENTORY_AUTH_TOKEN"); v != "" {
+		cfg.Health.AuthToken = v
+	}
+	if v := os.Getenv("INVENTORY_PEER_TOKEN"); v != "" {
+		cfg.Watchdog.PeerToken = v
 	}
 }

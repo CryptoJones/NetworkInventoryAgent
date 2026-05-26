@@ -1,0 +1,60 @@
+{{define "watchdog"}}
+{{template "head" .}}
+<body>
+{{template "nav" .}}
+<main>
+  <h1>Watchdog</h1>
+  <p class="subtitle">Peer-agent sanity check</p>
+  <meta http-equiv="refresh" content="30">
+
+  {{if .Peer}}
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Peer Reachable</div>
+      <div class="card-value">
+        {{if .Peer.Reachable}}
+          <span style="color:#3fb950">YES</span>
+        {{else}}
+          <span style="color:#f85149">NO</span>
+        {{end}}
+      </div>
+      <div class="card-sub">at {{.Peer.Addr}}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Consecutive Failures</div>
+      <div class="card-value">{{.Peer.ConsecutiveFailures}}</div>
+      <div class="card-sub">since last success</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Peer Host Count</div>
+      <div class="card-value">{{.Peer.PeerHostCount}}</div>
+      <div class="card-sub">drift {{formatPct .Peer.DriftPct}}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Last Checked</div>
+      <div class="card-value" style="font-size:16px;padding-top:6px">{{formatTime .Peer.LastCheckedAt}}</div>
+      <div class="card-sub">UTC</div>
+    </div>
+  </div>
+
+  {{if .Peer.Stale}}
+  <div class="error-banner">
+    <strong>Peer scan is stale.</strong> Their LastScanAt is older than the freshness threshold — check the peer's log or restart it.
+  </div>
+  {{end}}
+
+  {{if .Peer.LastError}}
+  <div class="error-banner">
+    <strong>Most recent error:</strong> {{.Peer.LastError}}
+  </div>
+  {{end}}
+
+  {{else}}
+  <div class="empty">
+    No watchdog data yet. Either this agent runs standalone, or the watchdog hasn't completed its first tick.
+  </div>
+  {{end}}
+</main>
+</body>
+</html>
+{{end}}

@@ -3,8 +3,18 @@
 <body>
 {{template "nav" .}}
 <main>
-  <h1>Dashboard</h1>
-  <p class="subtitle">Live inventory summary — refreshes every 30 s</p>
+  <div class="page-header">
+    <div>
+      <h1>Dashboard</h1>
+      <p class="subtitle">Live inventory summary — refreshes every 30 s</p>
+    </div>
+    <form method="POST" action="/scan" class="inline-form">
+      <input type="hidden" name="csrf" value="{{.CSRFToken}}">
+      <button type="submit" class="btn">Trigger Scan</button>
+      <a class="btn-link" href="/export.json" download>Export JSON</a>
+      <a class="btn-link" href="/export.csv" download>Export CSV</a>
+    </form>
+  </div>
   <meta http-equiv="refresh" content="30">
 
   {{if .LoadErrors}}

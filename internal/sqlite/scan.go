@@ -12,7 +12,8 @@ import (
 
 // ScanRepo is the SQLite implementation of store.ScanStore.
 type ScanRepo struct {
-	conn *sql.DB
+	writer *sql.DB
+	reader *sql.DB
 }
 
 var _ store.ScanStore = (*ScanRepo)(nil)
@@ -23,7 +24,7 @@ func (r *ScanRepo) Create(ctx context.Context, s *models.Scan) (int64, error) {
 		VALUES (?, ?, ?, ?) RETURNING id`
 
 	var id int64
-	if err := r.conn.QueryRowContext(ctx, q,
+	if err := r.writer.QueryRowContext(ctx, q,
 		s.Subnet, s.HostsFound, s.StartedAt, s.FinishedAt,
 	).Scan(&id); err != nil {
 		return 0, fmt.Errorf("create scan: %w", err)
@@ -33,7 +34,7 @@ func (r *ScanRepo) Create(ctx context.Context, s *models.Scan) (int64, error) {
 
 func (r *ScanRepo) Finish(ctx context.Context, id int64, hostsFound int, finishedAt time.Time) error {
 	const q = `UPDATE scans SET hosts_found = ?, finished_at = ? WHERE id = ?`
-	res, err := r.conn.ExecContext(ctx, q, hostsFound, finishedAt, id)
+	res, err := r.writer.ExecContext(ctx, q, hostsFound, finishedAt, id)
 	if err != nil {
 		return fmt.Errorf("finish scan %d: %w", id, err)
 	}
@@ -52,7 +53,7 @@ func (r *ScanRepo) List(ctx context.Context) ([]*models.Scan, error) {
 		SELECT id, subnet, hosts_found, started_at, finished_at
 		FROM scans ORDER BY started_at DESC`
 
-	rows, err := r.conn.QueryContext(ctx, q)
+	rows, err := r.reader.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("list scans: %w", err)
 	}

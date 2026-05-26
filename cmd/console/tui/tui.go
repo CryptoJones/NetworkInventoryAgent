@@ -151,6 +151,7 @@ type dataLoadedMsg struct {
 
 // Model is the top-level bubbletea model.
 type Model struct {
+	ctx   context.Context
 	hosts store.HostStore
 	ports store.PortStore
 	scans store.ScanStore
@@ -178,13 +179,16 @@ type Model struct {
 	detailTable table.Model
 }
 
-// New creates a new TUI Model connected to the given stores.
-func New(hosts store.HostStore, ports store.PortStore, scans store.ScanStore) Model {
+// New creates a new TUI Model connected to the given stores. ctx is plumbed
+// into every store query so a blocked DB call is cancelled when the user
+// quits or the bubbletea Program shuts down.
+func New(ctx context.Context, hosts store.HostStore, ports store.PortStore, scans store.ScanStore) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(colBlue)
 
 	m := Model{
+		ctx:     ctx,
 		hosts:   hosts,
 		ports:   ports,
 		scans:   scans,
@@ -327,8 +331,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // --- data loading ---
 
 func (m Model) loadAll() tea.Cmd {
+	ctx := m.ctx
 	return func() tea.Msg {
-		ctx := context.Background()
 		hosts, err := m.hosts.List(ctx)
 		if err != nil {
 			return dataLoadedMsg{err: err}
@@ -346,8 +350,8 @@ func (m Model) loadAll() tea.Cmd {
 }
 
 func (m Model) loadHostDetail(ip string) tea.Cmd {
+	ctx := m.ctx
 	return func() tea.Msg {
-		ctx := context.Background()
 		hosts, err := m.hosts.List(ctx)
 		if err != nil {
 			return dataLoadedMsg{err: err}

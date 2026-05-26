@@ -21,6 +21,12 @@ type Agent struct {
 	hosts   store.HostStore
 	scanner *scanner.Scanner
 	tracker *health.Tracker
+	now     func() time.Time
+
+	// trigger is a buffered channel that lets external callers
+	// (e.g. POST /scan) force an immediate cycle without waiting for the
+	// next ticker firing. Capacity 1 so concurrent triggers coalesce.
+	trigger chan struct{}
 }
 
 // New creates an Agent. The caller is responsible for starting the health
@@ -34,11 +40,30 @@ func New(
 	tracker *health.Tracker,
 ) *Agent {
 	return &Agent{
-		name:    name,
-		cfg:     cfg,
-		hosts:   hosts,
-		scanner: scanner.New(hosts, ports, scans, cfg.Timeout.Duration, cfg.Workers, cfg.MaxHosts),
+		name:  name,
+		cfg:   cfg,
+		hosts: hosts,
+		scanner: scanner.New(
+			hosts, ports, scans,
+			cfg.Timeout.Duration, cfg.Workers, cfg.MaxHosts,
+			cfg.ProbePorts,
+		),
 		tracker: tracker,
+		now:     time.Now,
+		trigger: make(chan struct{}, 1),
+	}
+}
+
+// Trigger requests an out-of-cycle scan. Returns true if the request was
+// queued (channel capacity available), false if a trigger is already
+// pending — in that case the queued cycle will satisfy the new request too.
+// Safe to call from HTTP handlers.
+func (a *Agent) Trigger() bool {
+	select {
+	case a.trigger <- struct{}{}:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -60,13 +85,16 @@ func (a *Agent) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			a.runCycle(ctx, log)
+		case <-a.trigger:
+			log.Info("on-demand scan triggered")
+			a.runCycle(ctx, log)
 		}
 	}
 }
 
 func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	log.Info("scan cycle started", "subnets", len(a.cfg.Subnets))
-	started := time.Now()
+	started := a.now()
 	cycleHosts := 0
 	cycleHealthy := true
 	for _, subnet := range a.cfg.Subnets {
@@ -78,6 +106,10 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 		}
 		log.Debug("subnet scanned", "subnet", subnet, "hosts", n)
 		cycleHosts += n
+	}
+
+	if pruned := a.pruneStale(ctx, log, started); pruned > 0 {
+		log.Info("pruned stale hosts", "count", pruned)
 	}
 
 	// Use the actual DB count so the tracker reflects total accumulated
@@ -92,12 +124,9 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	a.tracker.RecordScan()
 	a.tracker.SetHealthy(cycleHealthy)
 
-	duration := time.Since(started)
+	duration := a.now().Sub(started)
 	interval := a.cfg.ScanInterval.Duration
 	if interval > 0 && duration > interval/2 {
-		// The ticker drops missed firings silently, so a cycle that takes
-		// most of an interval means the agent is one tick away from
-		// effectively halving its scan cadence. Warn early.
 		log.Warn("scan cycle nearly exceeded interval",
 			"duration", duration.Round(time.Millisecond),
 			"interval", interval,
@@ -109,4 +138,31 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 		"duration", duration.Round(time.Millisecond),
 		"healthy", cycleHealthy,
 	)
+}
+
+// pruneStale deletes hosts whose last_seen is older than the configured
+// HostTTL. Returns the number of hosts pruned. Disabled when HostTTL is 0
+// (the default), so existing deployments don't lose history silently.
+func (a *Agent) pruneStale(ctx context.Context, log *slog.Logger, now time.Time) int {
+	ttl := a.cfg.HostTTL.Duration
+	if ttl <= 0 {
+		return 0
+	}
+	cutoff := now.Add(-ttl)
+	hosts, err := a.hosts.List(ctx)
+	if err != nil {
+		log.Warn("prune: list hosts failed", "err", err)
+		return 0
+	}
+	pruned := 0
+	for _, h := range hosts {
+		if h.LastSeen.Before(cutoff) {
+			if err := a.hosts.Delete(ctx, h.ID); err != nil {
+				log.Warn("prune: delete host failed", "id", h.ID, "ip", h.IPAddress, "err", err)
+				continue
+			}
+			pruned++
+		}
+	}
+	return pruned
 }

@@ -10,9 +10,13 @@ import (
 	"github.com/Ronin48/NetworkInventoryAgent/models"
 )
 
-// HostRepo is the SQLite implementation of store.HostStore.
+// HostRepo is the SQLite implementation of store.HostStore. It uses the
+// shared writer pool for mutations (Upsert/Delete) and the reader pool for
+// queries (GetByIP/List/Count), so dashboard reads no longer block behind
+// the scanner's upserts.
 type HostRepo struct {
-	conn *sql.DB
+	writer *sql.DB
+	reader *sql.DB
 }
 
 // compile-time interface check
@@ -32,7 +36,7 @@ func (r *HostRepo) Upsert(ctx context.Context, h *models.Host) (int64, error) {
 		RETURNING id`
 
 	var id int64
-	err := r.conn.QueryRowContext(ctx, q,
+	err := r.writer.QueryRowContext(ctx, q,
 		h.IPAddress, h.MACAddress, h.Hostname,
 		h.OSFingerprint, h.Vendor, h.DeviceType,
 	).Scan(&id)
@@ -49,7 +53,7 @@ func (r *HostRepo) GetByIP(ctx context.Context, ip string) (*models.Host, error)
 		FROM hosts WHERE ip_address = ?`
 
 	h := &models.Host{}
-	err := r.conn.QueryRowContext(ctx, q, ip).Scan(
+	err := r.reader.QueryRowContext(ctx, q, ip).Scan(
 		&h.ID, &h.IPAddress, &h.MACAddress, &h.Hostname, &h.OSFingerprint,
 		&h.Vendor, &h.DeviceType, &h.FirstSeen, &h.LastSeen,
 	)
@@ -68,7 +72,7 @@ func (r *HostRepo) List(ctx context.Context) ([]*models.Host, error) {
 		       vendor, device_type, first_seen, last_seen
 		FROM hosts ORDER BY ip_address`
 
-	rows, err := r.conn.QueryContext(ctx, q)
+	rows, err := r.reader.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("list hosts: %w", err)
 	}
@@ -90,14 +94,14 @@ func (r *HostRepo) List(ctx context.Context) ([]*models.Host, error) {
 
 func (r *HostRepo) Count(ctx context.Context) (int, error) {
 	var n int
-	if err := r.conn.QueryRowContext(ctx, `SELECT count(*) FROM hosts`).Scan(&n); err != nil {
+	if err := r.reader.QueryRowContext(ctx, `SELECT count(*) FROM hosts`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count hosts: %w", err)
 	}
 	return n, nil
 }
 
 func (r *HostRepo) Delete(ctx context.Context, id int64) error {
-	if _, err := r.conn.ExecContext(ctx, `DELETE FROM hosts WHERE id = ?`, id); err != nil {
+	if _, err := r.writer.ExecContext(ctx, `DELETE FROM hosts WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete host %d: %w", id, err)
 	}
 	return nil

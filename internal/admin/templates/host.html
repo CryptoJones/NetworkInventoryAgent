@@ -62,7 +62,7 @@
         <tr>
           <td class="mono" style="font-weight:600;color:#f0f6fc">{{.Number}}</td>
           <td>
-            {{if eq (string .Protocol) "tcp"}}
+            {{if eq .Protocol "tcp"}}
               <span class="badge badge-tcp">tcp</span>
             {{else}}
               <span class="badge badge-udp">udp</span>
@@ -70,9 +70,9 @@
           </td>
           <td>{{if .Service}}{{.Service}}{{else}}<span style="color:#6e7681">unknown</span>{{end}}</td>
           <td>
-            {{if eq (string .State) "open"}}
+            {{if eq .State "open"}}
               <span class="badge badge-open">open</span>
-            {{else if eq (string .State) "filtered"}}
+            {{else if eq .State "filtered"}}
               <span class="badge badge-filtered">filtered</span>
             {{else}}
               <span class="badge badge-closed">{{.State}}</span>

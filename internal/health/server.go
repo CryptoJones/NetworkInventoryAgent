@@ -2,10 +2,12 @@ package health
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -14,22 +16,29 @@ import (
 //	GET /health  — 200 OK if the agent is healthy AND has scanned recently,
 //	               503 otherwise
 //	GET /status  — JSON-encoded Status
+//
+// When authToken is non-empty both endpoints require
+// `Authorization: Bearer <token>`; mismatches return 401 in constant time.
 type Server struct {
 	addr       string
 	tracker    *Tracker
 	staleAfter time.Duration
+	authToken  string
 	srv        *http.Server
 }
 
 // NewServer constructs a health server. staleAfter is the maximum age of the
 // most recent scan before /health flips to 503; pass 0 to disable the
 // freshness check (e.g. for tests). A typical value is 3×ScanInterval.
-func NewServer(addr string, tracker *Tracker, staleAfter time.Duration) *Server {
-	s := &Server{addr: addr, tracker: tracker, staleAfter: staleAfter}
+//
+// authToken, when non-empty, gates both endpoints behind a bearer header so
+// off-loopback binds don't leak host counts to the network (OWASP A01/A05).
+func NewServer(addr string, tracker *Tracker, staleAfter time.Duration, authToken string) *Server {
+	s := &Server{addr: addr, tracker: tracker, staleAfter: staleAfter, authToken: authToken}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.HandleFunc("GET /status", s.handleStatus)
+	mux.HandleFunc("GET /health", s.requireAuth(s.handleHealth))
+	mux.HandleFunc("GET /status", s.requireAuth(s.handleStatus))
 
 	s.srv = &http.Server{
 		Addr:              addr,
@@ -40,6 +49,28 @@ func NewServer(addr string, tracker *Tracker, staleAfter time.Duration) *Server 
 		IdleTimeout:       30 * time.Second,
 	}
 	return s
+}
+
+// requireAuth wraps a handler with the bearer-token check. It is a no-op when
+// the server was constructed without an authToken so the loopback default
+// stays curl-friendly.
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.authToken == "" {
+			next(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		got, ok := strings.CutPrefix(auth, "Bearer ")
+		// Constant-time compare so partial-match timing can't be used to
+		// bisect the token.
+		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(s.authToken)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="inventory-agent"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
 }
 
 // Addr returns the address the server is actually listening on. Call this

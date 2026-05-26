@@ -179,7 +179,7 @@ func (m *mockPortStore) DeleteByHost(_ context.Context, hostID int64) error {
 
 // newScanner returns a Scanner with a short dial timeout and modest limits.
 func newScanner(hosts *mockHostStore, scans *mockScanStore) *scanner.Scanner {
-	return scanner.New(hosts, nil, scans, 10*time.Millisecond, 10, 65535)
+	return scanner.New(hosts, nil, scans, 10*time.Millisecond, 10, 65535, nil)
 }
 
 // --- tests ---
@@ -193,7 +193,7 @@ func TestScanner_Scan_InvalidCIDR(t *testing.T) {
 
 func TestScanner_Scan_MaxHostsGuard(t *testing.T) {
 	// Limit to 5 hosts; /24 has 254 usable addresses — should be rejected immediately.
-	s := scanner.New(newMockHostStore(), nil, newMockScanStore(), 10*time.Millisecond, 4, 5)
+	s := scanner.New(newMockHostStore(), nil, newMockScanStore(), 10*time.Millisecond, 4, 5, nil)
 	_, err := s.Scan(t.Context(), "192.168.1.0/24")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds limit")
@@ -253,7 +253,7 @@ func TestScanner_Scan_PersistsOpenPort(t *testing.T) {
 	hosts := newMockHostStore()
 	ports := newMockPortStore()
 	scans := newMockScanStore()
-	s := scanner.New(hosts, ports, scans, 500*time.Millisecond, 4, 65535)
+	s := scanner.New(hosts, ports, scans, 500*time.Millisecond, 4, 65535, nil)
 
 	n, err := s.Scan(t.Context(), "127.0.0.1/32")
 	require.NoError(t, err)
@@ -277,7 +277,7 @@ func TestScanner_Scan_PersistsOpenPort(t *testing.T) {
 func TestScanner_Scan_DoesNotProbeNetworkOrBroadcast(t *testing.T) {
 	hosts := newMockHostStore()
 	// Scanner with 1-worker and tiny subnet; cancel right away so no real dials.
-	s := scanner.New(hosts, nil, newMockScanStore(), time.Nanosecond, 1, 65535)
+	s := scanner.New(hosts, nil, newMockScanStore(), time.Nanosecond, 1, 65535, nil)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
