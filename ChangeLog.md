@@ -17,6 +17,28 @@ _No unreleased changes._
 
 ---
 
+## 26.01 — 2026-05-24
+
+### Fixed
+
+- **Scanner now persists the open port it discovered** during liveness
+  probing (Planning item #1). Previously the `PortRepo` was never written
+  to from anywhere in the codebase, so both the web admin console and the
+  TUI's "Open Ports" view were always empty in production. Each
+  successful probe now writes one `models.Port` row for the answering
+  port, keyed on `(host_id, port, tcp)` via the existing upsert.
+
+### Changed
+
+- `scanner.New` and `agent.New` signatures gained a `store.PortStore`
+  parameter (immediately after `store.HostStore`). Callers in
+  `cmd/agent`, `cmd/wintermute`, and `cmd/neuromancer` updated. A `nil`
+  port store is permitted and yields the old liveness-only behaviour.
+- `scanner.probe` now returns `(port int, ok bool)` instead of `bool` so
+  the calling goroutine knows which port to record.
+
+---
+
 ## 26.00 — 2026-05-24
 
 Baseline. `Planning.md` adopted; `ChangeLog.md` introduced. No code changes.
