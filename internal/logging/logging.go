@@ -8,8 +8,11 @@ import (
 	"github.com/Ronin48/NetworkInventoryAgent/internal/config"
 )
 
-// Setup initialises the global slog logger according to cfg.
-func Setup(cfg config.LogConfig) {
+// Setup initialises the global slog logger according to cfg. When name is
+// non-empty every record carries an "agent" field so a combined stdout from
+// a paired deployment is unambiguous even before the scan loop attaches its
+// own logger.
+func Setup(cfg config.LogConfig, name string) {
 	var level slog.Level
 	switch cfg.Level {
 	case "debug":
@@ -29,5 +32,9 @@ func Setup(cfg config.LogConfig) {
 	} else {
 		handler = slog.NewTextHandler(os.Stdout, opts)
 	}
-	slog.SetDefault(slog.New(handler))
+	logger := slog.New(handler)
+	if name != "" {
+		logger = logger.With("agent", name)
+	}
+	slog.SetDefault(logger)
 }

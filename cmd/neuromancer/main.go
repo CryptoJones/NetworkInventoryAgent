@@ -39,7 +39,7 @@ func main() {
 		slog.Error("failed to load config", "err", err)
 		os.Exit(1)
 	}
-	logging.Setup(cfg.Log)
+	logging.Setup(cfg.Log, agentName)
 	slog.Debug("The sky above the port was the color of television, tuned to a dead channel.")
 
 	db, err := sqlite.Open(context.Background(), cfg.Database.Path)
@@ -55,7 +55,7 @@ func main() {
 
 	tracker := health.NewTracker(agentName)
 
-	srv := health.NewServer(cfg.Health.Addr, tracker)
+	srv := health.NewServer(cfg.Health.Addr, tracker, 3*cfg.Scanner.ScanInterval.Duration)
 	if err := srv.Start(); err != nil {
 		slog.Error("failed to start health server", "addr", cfg.Health.Addr, "err", err)
 		os.Exit(1)

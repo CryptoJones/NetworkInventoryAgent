@@ -113,16 +113,23 @@ fi
 info "Mode: $MODE"
 
 # ---------- subnet configuration ---------------------------------------------
+#
+# Custom subnets are written to *.local.json copies under configs/, never
+# back into the tracked configs/*.json files. The *.local.json pattern is
+# gitignored, so re-running with a different subnet leaves a clean working
+# tree.
+
+WINTERMUTE_CFG=configs/wintermute.json
+NEUROMANCER_CFG=configs/neuromancer.json
+AGENT_CFG=configs/agent.json
 
 if [[ ${#SUBNETS[@]} -eq 0 ]]; then
     heading "Subnet configuration"
 
-    # Show current subnets from the relevant config
     if [[ "$MODE" == "paired" ]]; then
-        CURRENT=$(jq -r '.scanner.subnets[]' configs/wintermute.json 2>/dev/null | tr '\n' ' ')
+        CURRENT=$(jq -r '.scanner.subnets[]' "$WINTERMUTE_CFG" 2>/dev/null | tr '\n' ' ')
     else
-        CURRENT=$(jq -r '.scanner.subnets[]' configs/agent.json 2>/dev/null \
-               || jq -r '.scanner.subnets[]' configs/wintermute.json 2>/dev/null | tr '\n' ' ')
+        CURRENT=$(jq -r '.scanner.subnets[]' "$AGENT_CFG" 2>/dev/null | tr '\n' ' ')
     fi
     [[ -n "$CURRENT" ]] && info "Current subnets: $CURRENT"
 
@@ -134,33 +141,26 @@ if [[ ${#SUBNETS[@]} -eq 0 ]]; then
     fi
 fi
 
-# ---------- update config files if subnets were provided --------------------
-
-update_subnets() {
-    local config_file="$1"
+# write_local_config copies $1 to $2 with the SUBNETS array merged in.
+write_local_config() {
+    local src="$1"
+    local dst="$2"
     local subnets_json
     subnets_json=$(printf '%s\n' "${SUBNETS[@]}" | jq -R . | jq -sc .)
-    local tmp
-    tmp=$(mktemp)
-    jq --argjson s "$subnets_json" '.scanner.subnets = $s' "$config_file" > "$tmp"
-    mv "$tmp" "$config_file"
-    info "Updated subnets in $config_file: ${SUBNETS[*]}"
+    jq --argjson s "$subnets_json" '.scanner.subnets = $s' "$src" > "$dst"
+    info "Wrote $dst (subnets: ${SUBNETS[*]})"
 }
 
 if [[ ${#SUBNETS[@]} -gt 0 ]]; then
-    heading "Updating config files"
+    heading "Generating local config"
     if [[ "$MODE" == "paired" ]]; then
-        update_subnets configs/wintermute.json
-        update_subnets configs/neuromancer.json
+        write_local_config "$WINTERMUTE_CFG" configs/wintermute.local.json
+        write_local_config "$NEUROMANCER_CFG" configs/neuromancer.local.json
+        WINTERMUTE_CFG=configs/wintermute.local.json
+        NEUROMANCER_CFG=configs/neuromancer.local.json
     else
-        # For standalone mode use configs/agent.json if it exists, otherwise create it
-        if [[ ! -f configs/agent.json ]]; then
-            cp configs/wintermute.json configs/agent.json
-            # Standalone: no watchdog peer needed; clear peer_addr
-            jq '.watchdog.peer_addr = ""' configs/agent.json > /tmp/agent_tmp.json \
-                && mv /tmp/agent_tmp.json configs/agent.json
-        fi
-        update_subnets configs/agent.json
+        write_local_config "$AGENT_CFG" configs/agent.local.json
+        AGENT_CFG=configs/agent.local.json
     fi
 fi
 
@@ -197,13 +197,13 @@ trap cleanup SIGINT SIGTERM
 PIDS=()
 
 if [[ "$MODE" == "paired" ]]; then
-    ./wintermute  -config configs/wintermute.json  &
+    ./wintermute  -config "$WINTERMUTE_CFG"  &
     PIDS+=($!)
-    info "Wintermute started (PID $!)"
+    info "Wintermute started (PID $!, config $WINTERMUTE_CFG)"
 
-    ./neuromancer -config configs/neuromancer.json &
+    ./neuromancer -config "$NEUROMANCER_CFG" &
     PIDS+=($!)
-    info "Neuromancer started (PID $!)"
+    info "Neuromancer started (PID $!, config $NEUROMANCER_CFG)"
 
     echo ""
     info "Admin consoles:"
@@ -213,11 +213,9 @@ if [[ "$MODE" == "paired" ]]; then
     info "  Wintermute  → http://127.0.0.1:8080/health"
     info "  Neuromancer → http://127.0.0.1:8081/health"
 else
-    AGENT_CONFIG="configs/agent.json"
-    [[ -f "$AGENT_CONFIG" ]] || AGENT_CONFIG="configs/wintermute.json"
-    ./agent -config "$AGENT_CONFIG" &
+    ./agent -config "$AGENT_CFG" &
     PIDS+=($!)
-    info "Agent started (PID $!)"
+    info "Agent started (PID $!, config $AGENT_CFG)"
 
     echo ""
     info "Admin console → http://127.0.0.1:9090"

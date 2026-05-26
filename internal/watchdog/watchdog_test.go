@@ -13,7 +13,7 @@ import (
 
 func startPeer(t *testing.T, tracker *health.Tracker) string {
 	t.Helper()
-	srv := health.NewServer(":0", tracker)
+	srv := health.NewServer(":0", tracker, 0)
 	require.NoError(t, srv.Start())
 	t.Cleanup(func() { srv.Shutdown(context.Background()) }) //nolint:errcheck
 

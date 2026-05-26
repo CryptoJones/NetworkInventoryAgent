@@ -89,13 +89,62 @@ func NewServer(
 
 	s.srv = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           withMiddleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 	return s, nil
+}
+
+// withMiddleware wraps the mux with two cross-cutting concerns:
+//   - per-request access logging (one slog record per response)
+//   - baseline security headers (defence-in-depth for the unauthenticated
+//     loopback console; non-trivial once operators bind it to 0.0.0.0)
+//
+// CSP keeps 'unsafe-inline' for styles because the templates embed a single
+// <style> block; switching to a nonce is tracked separately.
+func withMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Permissions-Policy", "interest-cohort=()")
+		h.Set("Content-Security-Policy",
+			"default-src 'none'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; "+
+				"connect-src 'self'; "+
+				"base-uri 'none'; "+
+				"form-action 'self'; "+
+				"frame-ancestors 'none'")
+
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		started := time.Now()
+		next.ServeHTTP(rec, r)
+		slog.Info("admin request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration", time.Since(started).Round(time.Millisecond),
+			"remote", r.RemoteAddr,
+		)
+	})
+}
+
+// statusRecorder lets the access-log middleware capture the response status
+// that handlers chose. Defaults to 200 because http.ResponseWriter only
+// records WriteHeader when an explicit status is set.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
 }
 
 // Start begins accepting connections in a background goroutine and returns
@@ -136,6 +185,10 @@ type dashboardData struct {
 	HostCount   int
 	RecentScans []*models.Scan
 	RecentHosts []*models.Host
+	// LoadErrors is the list of card/section names whose backing query
+	// failed during this render. The template uses it to surface a banner
+	// instead of showing stale zeros as if everything were fine.
+	LoadErrors []string
 }
 
 type hostsData struct {
@@ -173,18 +226,27 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	if n, err := s.hosts.Count(r.Context()); err == nil {
 		data.HostCount = n
+	} else {
+		slog.Error("dashboard: count hosts", "err", err)
+		data.LoadErrors = append(data.LoadErrors, "host count")
 	}
 	if scans, err := s.scans.List(r.Context()); err == nil {
 		if len(scans) > 10 {
 			scans = scans[:10]
 		}
 		data.RecentScans = scans
+	} else {
+		slog.Error("dashboard: list scans", "err", err)
+		data.LoadErrors = append(data.LoadErrors, "recent scans")
 	}
 	if hosts, err := s.hosts.List(r.Context()); err == nil {
 		if len(hosts) > 10 {
 			hosts = hosts[:10]
 		}
 		data.RecentHosts = hosts
+	} else {
+		slog.Error("dashboard: list hosts", "err", err)
+		data.LoadErrors = append(data.LoadErrors, "host inventory")
 	}
 	s.render(w, "dashboard", data)
 }

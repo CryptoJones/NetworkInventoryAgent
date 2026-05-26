@@ -19,6 +19,12 @@ steps:
     commands:
       - go test -race -timeout 120s ./...
 
+  vuln:
+    image: golang:1.25
+    commands:
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
+      - govulncheck ./...
+
   docker:
     image: plugins/docker
     settings:

@@ -320,6 +320,33 @@ func TestHandleHosts_StoreError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }
 
+func TestHandleDashboard_SurfacesLoadErrors(t *testing.T) {
+	// All three backing queries fail: the dashboard must still render 200
+	// (it's the operator's only window) but show an inline error banner.
+	hosts := &mockHostStore{err: errors.New("hosts blew up")}
+	scans := &mockScanStore{err: errors.New("scans blew up")}
+	srv := newTestServer(t, hosts, &mockPortStore{}, scans)
+
+	resp := get(t, srv, "/")
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	body := readBody(t, resp)
+	assert.Contains(t, body, "Some data failed to load")
+	assert.Contains(t, body, "host count")
+	assert.Contains(t, body, "recent scans")
+}
+
+func TestSecurityHeaders_Present(t *testing.T) {
+	srv := newTestServer(t, &mockHostStore{}, &mockPortStore{}, &mockScanStore{})
+	resp := get(t, srv, "/")
+	defer resp.Body.Close()
+	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
+	assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
+	assert.NotEmpty(t, resp.Header.Get("Content-Security-Policy"))
+}
+
 func TestHandleScans_StoreError(t *testing.T) {
 	scans := &mockScanStore{err: errors.New("db gone")}
 	srv := newTestServer(t, &mockHostStore{}, &mockPortStore{}, scans)

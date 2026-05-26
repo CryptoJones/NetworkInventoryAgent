@@ -1,0 +1,28 @@
+{
+  "database": {
+    "path": "/data/agent.db"
+  },
+  "scanner": {
+    "subnets": ["192.168.1.0/24"],
+    "scan_interval": "5m",
+    "timeout": "2s",
+    "workers": 50,
+    "max_hosts": 65535
+  },
+  "log": {
+    "level": "info",
+    "format": "json"
+  },
+  "health": {
+    "addr": "0.0.0.0:8080"
+  },
+  "admin": {
+    "addr": "0.0.0.0:9090"
+  },
+  "watchdog": {
+    "peer_addr": "",
+    "interval": "30s",
+    "max_host_drift_pct": 50.0,
+    "max_failures": 3
+  }
+}

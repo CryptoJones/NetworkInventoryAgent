@@ -66,11 +66,14 @@ func (a *Agent) Run(ctx context.Context) {
 
 func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	log.Info("scan cycle started", "subnets", len(a.cfg.Subnets))
+	started := time.Now()
 	cycleHosts := 0
+	cycleHealthy := true
 	for _, subnet := range a.cfg.Subnets {
 		n, err := a.scanner.Scan(ctx, subnet)
 		if err != nil {
 			log.Warn("subnet scan failed", "subnet", subnet, "err", err)
+			cycleHealthy = false
 			continue
 		}
 		log.Debug("subnet scanned", "subnet", subnet, "hosts", n)
@@ -83,8 +86,27 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	if err != nil {
 		log.Warn("failed to count total hosts", "err", err)
 		total = cycleHosts
+		cycleHealthy = false
 	}
 	a.tracker.SetHostCount(total)
 	a.tracker.RecordScan()
-	log.Info("scan cycle complete", "cycle_hosts", cycleHosts, "total_hosts", total)
+	a.tracker.SetHealthy(cycleHealthy)
+
+	duration := time.Since(started)
+	interval := a.cfg.ScanInterval.Duration
+	if interval > 0 && duration > interval/2 {
+		// The ticker drops missed firings silently, so a cycle that takes
+		// most of an interval means the agent is one tick away from
+		// effectively halving its scan cadence. Warn early.
+		log.Warn("scan cycle nearly exceeded interval",
+			"duration", duration.Round(time.Millisecond),
+			"interval", interval,
+		)
+	}
+	log.Info("scan cycle complete",
+		"cycle_hosts", cycleHosts,
+		"total_hosts", total,
+		"duration", duration.Round(time.Millisecond),
+		"healthy", cycleHealthy,
+	)
 }
