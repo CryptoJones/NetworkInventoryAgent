@@ -17,6 +17,118 @@ _No unreleased changes._
 
 ---
 
+## 26.06 — 2026-05-26
+
+A second batched pass — items #4, #10, #12, #14, #17, #18, #23, #24, #25,
+#27, #30, #32, #33, #34, #35, #36, #37, #38, #39, and #40 from Planning.md.
+
+### Fixed
+
+- **WAL writer/reader pool split** (Planning item #4). `sqlite.DB` now
+  opens two `*sql.DB` pools against the same on-disk file: a writer
+  pinned at one connection and a reader sized for `2×GOMAXPROCS`.
+  Dashboard / watchdog queries no longer queue behind the scanner's
+  upserts. `:memory:` paths collapse to one pool because that storage
+  is per-connection. Repo structs gained `writer` / `reader` fields and
+  dispatch mutations vs. queries accordingly.
+- **IPv6 subnet size guard** (Planning item #33). The size check now
+  computes `1 << (bits-ones)` up front and refuses before allocating
+  the address slice — previously a /64 would have grown the slice to
+  2⁶⁴ entries long before the post-allocation check tripped.
+- **Global worker semaphore across subnets** (Planning item #34). The
+  per-Scan semaphore moved into the `Scanner` struct, so
+  `scanner.workers` now caps total concurrent dials across all subnets
+  in a cycle. Operators with 20 subnets no longer get `20×workers`
+  in-flight probes.
+
+### Added
+
+- **Bearer-token auth for `/health` and `/status`** (Planning item #12).
+  When `health.addr` is bound off-loopback the agent refuses to start
+  without `health.auth_token` (or `INVENTORY_AUTH_TOKEN`). The
+  watchdog peer client takes a matching `peer_token`. Token comparison
+  is constant-time; mismatches return 401 with `WWW-Authenticate`.
+- **Config-file permission check** (Planning item #18). Boot fails if a
+  config containing a bearer token has group/other read permissions.
+  Keep them in env vars or `chmod 600` the file.
+- **CSRF protection on the admin console** (Planning item #17). A
+  per-process random token gates every state-changing method;
+  templates carry the value in hidden form inputs so the no-JS flow
+  works out of the box.
+- **Watchdog peer-status surfacing** (Planning item #10). The watchdog
+  publishes its view (`reachable`, drift, staleness, last error) to
+  the `health.Tracker`, which exposes it on `GET /status` and at the
+  new `GET /watchdog` admin page.
+- **`POST /scan` on-demand trigger** (Planning item #23). The admin
+  console's dashboard now has a "Trigger Scan" button that pushes onto
+  a buffered channel consumed by `agent.Run`; coalesces when a trigger
+  is already pending.
+- **Host pruning / staleness policy** (Planning item #24). New
+  optional `scanner.host_ttl` config. Hosts whose `last_seen` is older
+  than this TTL are deleted at the end of each cycle. Disabled by
+  default to preserve existing deployments.
+- **`/export.json` and `/export.csv`** (Planning item #25) — full host
+  + ports snapshot without taking the agent down to copy the SQLite
+  file.
+- **Configurable probe-port list** (Planning item #27). New
+  `scanner.probe_ports []int` config; default unchanged.
+- **Reverse-DNS lookup** (Planning item #30). After a successful
+  probe, the scanner does a 500 ms PTR lookup and populates `Hostname`.
+- **Basic OS fingerprinting** (Planning item #32). Best-effort SSH
+  banner read on port 22 and HTTP `Server` header on 80/8080; absent
+  on TLS/443 (deferred to a future deep-probe pass).
+
+### Changed
+
+- **`cmd/internal/runtime`** (Planning item #35). The 95%-identical
+  `cmd/agent`, `cmd/wintermute`, and `cmd/neuromancer` `main.go` files
+  collapsed behind `runtime.Run(opts)` — each binary is now ~10 lines.
+- **`internal/admin` split into three files** (Planning item #36):
+  `server.go` (router + lifecycle), `handlers.go` (one per page),
+  `render.go` (template plumbing + page-data types), `middleware.go`
+  (existing middleware + CSRF).
+- **`string` funcMap helper removed** (Planning item #37). Templates
+  compare `models.Protocol` / `models.PortState` directly since
+  `eq` handles the underlying string kind reflectively.
+- **TUI uses a cancellable context** (Planning item #38). The console
+  binary plumbs a signal-cancelled context into `tui.New`; all
+  store loads now respect cancellation instead of using
+  `context.Background()`.
+- **Docker base images pinned by sha256 digest** (Planning item #14).
+  `golang:1.25-bookworm` and `alpine:3.20` now point at concrete
+  manifest digests; rebuilds are reproducible and supply-chain
+  advisories tie to an exact image.
+
+### Tooling
+
+- **`internal/agent` tests** (Planning item #39). New `agent_test.go`
+  covers `Trigger` coalescing, the Healthy flip on `Count()` failure,
+  and host pruning with/without TTL.
+- **golangci-lint** (Planning item #40). `.golangci.yml` configures
+  `errcheck`, `staticcheck`, `govet`, `ineffassign`, `bodyclose`,
+  `errorlint`, `gocritic`, and `revive`. CI runs `golangci-lint run
+  ./...`; `make lint` does the same locally.
+
+### Notes / breaking changes
+
+- `scanner.New` gained a trailing `probePorts []int` parameter. Pass
+  `nil` to keep the historical default.
+- `health.NewServer` gained a trailing `authToken string` parameter.
+  Pass `""` to disable auth (tests do this).
+- `health.NewClient` is preserved as the unauthenticated client;
+  use `health.NewAuthedClient(addr, token)` for peers behind auth.
+- `watchdog.New` gained a `publish func(health.PeerStatus)` parameter
+  alongside the existing `localStatus`. Pass `nil` for tests; pass
+  `tracker.SetPeer` in production.
+- `admin.NewServer` gained a trailing `trigger admin.Trigger`
+  parameter. Pass `nil` to omit `POST /scan` (501 in that case).
+- `logging.Setup(cfg, name)` is unchanged from 26.05.
+- Off-loopback `health.addr` without an `auth_token` now refuses to
+  boot. Docker compose deployments need to set `INVENTORY_AUTH_TOKEN`
+  on both agents (with matching values).
+
+---
+
 ## 26.05 — 2026-05-26
 
 A batched correctness, observability, and security pass — items #3, #5, #6,

@@ -25,6 +25,11 @@ steps:
       - go install golang.org/x/vuln/cmd/govulncheck@latest
       - govulncheck ./...
 
+  lint:
+    image: golangci/golangci-lint:latest
+    commands:
+      - golangci-lint run ./...
+
   docker:
     image: plugins/docker
     settings:

@@ -16,15 +16,31 @@ const maxStatusBytes = 1 << 20 // 1 MiB
 // Client fetches health and status from a peer agent's HTTP server.
 type Client struct {
 	baseURL    string
+	token      string
 	httpClient *http.Client
 }
 
+// NewClient builds an unauthenticated client (token is the empty string).
+// Use NewAuthedClient for off-loopback peers.
 func NewClient(baseURL string) *Client {
+	return NewAuthedClient(baseURL, "")
+}
+
+// NewAuthedClient builds a client that sends `Authorization: Bearer <token>`
+// on every request. Pass "" to disable auth (loopback peer).
+func NewAuthedClient(baseURL, token string) *Client {
 	return &Client{
 		baseURL: baseURL,
+		token:   token,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
+	}
+}
+
+func (c *Client) authorize(req *http.Request) {
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 }
 
@@ -34,6 +50,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
+	c.authorize(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
@@ -52,6 +69,7 @@ func (c *Client) FetchStatus(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, fmt.Errorf("build request: %w", err)
 	}
+	c.authorize(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return Status{}, fmt.Errorf("fetch status failed: %w", err)

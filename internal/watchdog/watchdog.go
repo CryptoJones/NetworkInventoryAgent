@@ -27,6 +27,9 @@ type Config struct {
 	Name string
 	// PeerAddr is the base URL of the peer's health server.
 	PeerAddr string
+	// PeerToken is the bearer token sent on every probe. Empty when the
+	// peer is on loopback and does not require auth.
+	PeerToken string
 	// Interval is how often to run the sanity checks.
 	Interval time.Duration
 	// ScanInterval is the expected gap between the peer's scans.
@@ -45,16 +48,23 @@ type Watchdog struct {
 	cfg         Config
 	client      *health.Client
 	localStatus func() health.Status
+	publish     func(health.PeerStatus)
 	failures    int
 }
 
 // New creates a Watchdog. localStatus is a callback that returns this agent's
-// current Status so the watchdog can compare inventories.
-func New(cfg Config, localStatus func() health.Status) *Watchdog {
+// current Status so the watchdog can compare inventories. publish, if non-nil,
+// is called after every tick with the watchdog's latest view of the peer —
+// the standard wiring is tracker.SetPeer.
+func New(cfg Config, localStatus func() health.Status, publish func(health.PeerStatus)) *Watchdog {
+	if publish == nil {
+		publish = func(health.PeerStatus) {}
+	}
 	return &Watchdog{
 		cfg:         cfg,
-		client:      health.NewClient(cfg.PeerAddr),
+		client:      health.NewAuthedClient(cfg.PeerAddr, cfg.PeerToken),
 		localStatus: localStatus,
+		publish:     publish,
 	}
 }
 
@@ -78,9 +88,19 @@ func (w *Watchdog) Run(ctx context.Context) {
 }
 
 func (w *Watchdog) check(ctx context.Context, log *slog.Logger) {
+	ps := health.PeerStatus{
+		Addr:          w.cfg.PeerAddr,
+		LastCheckedAt: time.Now().UTC(),
+	}
+	defer func() {
+		ps.ConsecutiveFailures = w.failures
+		w.publish(ps)
+	}()
+
 	// 1. Liveness
 	if err := w.client.Ping(ctx); err != nil {
 		w.failures++
+		ps.LastError = err.Error()
 		if w.failures >= w.cfg.MaxFailures {
 			log.Error("peer is DOWN",
 				"consecutive_failures", w.failures,
@@ -96,23 +116,28 @@ func (w *Watchdog) check(ctx context.Context, log *slog.Logger) {
 		return
 	}
 	w.failures = 0
+	ps.Reachable = true
 
 	// 2 & 3. Fetch full status for freshness and consistency checks.
 	peer, err := w.client.FetchStatus(ctx)
 	if err != nil {
 		log.Warn("could not fetch peer status", "err", err)
+		ps.LastError = err.Error()
 		return
 	}
+	ps.PeerHostCount = peer.HostCount
+	ps.PeerScanCount = peer.ScanCount
 
-	w.checkFreshness(peer, log)
-	w.checkConsistency(peer, log)
+	ps.Stale = w.checkFreshness(peer, log)
+	ps.DriftPct = w.checkConsistency(peer, log)
 }
 
-// checkFreshness warns if the peer hasn't completed a scan recently.
-func (w *Watchdog) checkFreshness(peer health.Status, log *slog.Logger) {
+// checkFreshness warns if the peer hasn't completed a scan recently and
+// returns true when it considers the peer stale.
+func (w *Watchdog) checkFreshness(peer health.Status, log *slog.Logger) bool {
 	if peer.LastScanAt == nil {
 		log.Warn("peer has never completed a scan")
-		return
+		return true
 	}
 	age := time.Since(*peer.LastScanAt)
 	staleThreshold := 2 * w.cfg.ScanInterval
@@ -121,16 +146,19 @@ func (w *Watchdog) checkFreshness(peer health.Status, log *slog.Logger) {
 			"last_scan_age", age.Round(time.Second),
 			"threshold", staleThreshold,
 		)
+		return true
 	}
+	return false
 }
 
-// checkConsistency warns if the peer's host count diverges too far from ours.
-func (w *Watchdog) checkConsistency(peer health.Status, log *slog.Logger) {
+// checkConsistency warns if the peer's host count diverges too far from ours
+// and returns the computed drift percentage.
+func (w *Watchdog) checkConsistency(peer health.Status, log *slog.Logger) float64 {
 	local := w.localStatus()
 
 	// Skip the check if either side has not yet completed a scan.
 	if local.ScanCount == 0 || peer.ScanCount == 0 {
-		return
+		return 0
 	}
 
 	mine := float64(local.HostCount)
@@ -138,7 +166,7 @@ func (w *Watchdog) checkConsistency(peer health.Status, log *slog.Logger) {
 
 	// Avoid division by zero when both counts are 0.
 	if mine == 0 && theirs == 0 {
-		return
+		return 0
 	}
 
 	larger := math.Max(mine, theirs)
@@ -158,4 +186,5 @@ func (w *Watchdog) checkConsistency(peer health.Status, log *slog.Logger) {
 			"drift_pct", math.Round(driftPct*10)/10,
 		)
 	}
+	return math.Round(driftPct*10) / 10
 }

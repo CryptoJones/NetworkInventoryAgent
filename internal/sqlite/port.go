@@ -11,7 +11,8 @@ import (
 
 // PortRepo is the SQLite implementation of store.PortStore.
 type PortRepo struct {
-	conn *sql.DB
+	writer *sql.DB
+	reader *sql.DB
 }
 
 var _ store.PortStore = (*PortRepo)(nil)
@@ -25,7 +26,7 @@ func (r *PortRepo) Upsert(ctx context.Context, p *models.Port) error {
 			state     = excluded.state,
 			last_seen = CURRENT_TIMESTAMP`
 
-	if _, err := r.conn.ExecContext(ctx, q,
+	if _, err := r.writer.ExecContext(ctx, q,
 		p.HostID, p.Number, string(p.Protocol), p.Service, string(p.State),
 	); err != nil {
 		return fmt.Errorf("upsert port %d/%s on host %d: %w", p.Number, p.Protocol, p.HostID, err)
@@ -38,7 +39,7 @@ func (r *PortRepo) ListByHost(ctx context.Context, hostID int64) ([]*models.Port
 		SELECT id, host_id, port, protocol, service, state, first_seen, last_seen
 		FROM ports WHERE host_id = ? ORDER BY port, protocol`
 
-	rows, err := r.conn.QueryContext(ctx, q, hostID)
+	rows, err := r.reader.QueryContext(ctx, q, hostID)
 	if err != nil {
 		return nil, fmt.Errorf("list ports for host %d: %w", hostID, err)
 	}
@@ -62,7 +63,7 @@ func (r *PortRepo) ListByHost(ctx context.Context, hostID int64) ([]*models.Port
 }
 
 func (r *PortRepo) DeleteByHost(ctx context.Context, hostID int64) error {
-	if _, err := r.conn.ExecContext(ctx,
+	if _, err := r.writer.ExecContext(ctx,
 		`DELETE FROM ports WHERE host_id = ?`, hostID,
 	); err != nil {
 		return fmt.Errorf("delete ports for host %d: %w", hostID, err)
