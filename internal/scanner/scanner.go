@@ -126,18 +126,46 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 	return count, nil
 }
 
-// probe tries each of the standard probe ports in order and returns the
-// first open port, or (0, false) if none answered.
+// probe dials every standard probe port concurrently and returns the first
+// port that answers, or (0, false) if all dials fail within s.timeout.
+// Concurrent fan-out collapses worst-case latency from len(probePorts)*timeout
+// to ~1*timeout for dead hosts — the original sequential probe could keep a
+// /24 sweep running longer than the scan interval.
 func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
+	dialCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	type result struct {
+		port int
+		ok   bool
+	}
+	results := make(chan result, len(probePorts))
 	d := net.Dialer{Timeout: s.timeout}
+
 	for _, port := range probePorts {
-		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
-		if err == nil {
+		go func(port int) {
+			conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+			if err != nil {
+				results <- result{}
+				return
+			}
 			conn.Close()
-			return port, true
+			results <- result{port: port, ok: true}
+		}(port)
+	}
+
+	var firstOpen int
+	for range probePorts {
+		r := <-results
+		if r.ok && firstOpen == 0 {
+			firstOpen = r.port
+			cancel() // short-circuit the remaining dials
 		}
 	}
-	return 0, false
+	if firstOpen == 0 {
+		return 0, false
+	}
+	return firstOpen, true
 }
 
 // usableIPs returns the set of host addresses in ipNet, skipping the network

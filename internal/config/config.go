@@ -107,7 +107,7 @@ func Default() *Config {
 		},
 		Scanner: ScannerConfig{
 			ScanInterval: Duration{Duration: 5 * time.Minute},
-			Timeout:      Duration{Duration: 30 * time.Second},
+			Timeout:      Duration{Duration: 2 * time.Second},
 			Workers:      50,
 			MaxHosts:     65535,
 		},
