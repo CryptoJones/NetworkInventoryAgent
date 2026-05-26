@@ -7,6 +7,14 @@
   <p class="subtitle">Live inventory summary — refreshes every 30 s</p>
   <meta http-equiv="refresh" content="30">
 
+  {{if .LoadErrors}}
+  <div class="error-banner">
+    <strong>Some data failed to load:</strong>
+    {{range $i, $name := .LoadErrors}}{{if $i}}, {{end}}{{$name}}{{end}}.
+    Check the agent log for details — the figures below may be incomplete.
+  </div>
+  {{end}}
+
   <div class="cards">
     <div class="card">
       <div class="card-label">Total Hosts</div>

@@ -155,12 +155,12 @@ type Model struct {
 	ports store.PortStore
 	scans store.ScanStore
 
-	current    view
-	width      int
-	height     int
-	loading    bool
-	err        error
-	spin       spinner.Model
+	current view
+	width   int
+	height  int
+	loading bool
+	err     error
+	spin    spinner.Model
 
 	// data
 	hostList  []*models.Host

@@ -72,6 +72,32 @@ func Run(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("begin transaction for %s: %w", name, err)
 		}
 
+		// Upgrade to a write transaction up front so two agents booting
+		// against a shared SQLite file serialise here instead of racing the
+		// applied-versions check above. The deferred default transaction
+		// would only acquire the write lock on first INSERT, by which point
+		// both processes might have read an empty applied set.
+		if _, err := tx.ExecContext(ctx, `ROLLBACK; BEGIN IMMEDIATE`); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("begin immediate for %s: %w", name, err)
+		}
+
+		// Re-check after acquiring the write lock — a peer agent may have
+		// applied this migration while we were waiting.
+		var already int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT count() FROM schema_migrations WHERE version = ?`, name,
+		).Scan(&already); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("recheck applied %s: %w", name, err)
+		}
+		if already > 0 {
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("commit no-op for %s: %w", name, err)
+			}
+			continue
+		}
+
 		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)

@@ -17,6 +17,69 @@ _No unreleased changes._
 
 ---
 
+## 26.05 — 2026-05-26
+
+A batched correctness, observability, and security pass — items #3, #5, #6,
+#7, #8, #9, #11, #15, #21, and #22 from Planning.md.
+
+### Fixed
+
+- **`/health` now actually reports unhealthy** (Planning item #3). The
+  agent flips `Tracker.Healthy` to `false` when a cycle's DB write fails
+  (subnet scan error or host count error), and `/health` additionally
+  returns 503 when the most recent scan is older than `3×ScanInterval`.
+  Previously `SetHealthy(false)` was never called, so Kubernetes liveness
+  probes, the Docker compose healthcheck, and any external monitor
+  reported "healthy" even when the agent was wedged.
+- **Migrations now race-safe** (Planning item #8). Each pending migration
+  upgrades its transaction to `BEGIN IMMEDIATE` and re-checks
+  `schema_migrations` after acquiring the write lock, so two agents
+  sharing one SQLite file no longer crash on first boot.
+- **Standalone agent ships its own config** (Planning item #5).
+  `configs/agent.json` and `configs/agent.docker.json` are now in the
+  repo, matching what the README and `cmd/agent` `-config` default both
+  point at.
+- **`start.sh` no longer mutates tracked configs** (Planning item #6).
+  Subnet overrides are written to `configs/*.local.json` (already
+  gitignored), so re-running with a different subnet leaves a clean
+  working tree.
+
+### Changed
+
+- **Admin dashboard surfaces backend failures** (Planning item #9).
+  Each of the three queries logs the underlying error and the page
+  renders an inline error banner listing which sections were degraded,
+  instead of silently showing zeros.
+- **Admin server emits one slog record per request** (Planning item
+  #21) with method, path, status, duration, and remote address.
+- **Admin server sets baseline security headers** on every response
+  (Planning item #11): `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+  `Permissions-Policy`, and a `Content-Security-Policy` that allows
+  inline `<style>` (templates) but blocks scripts/frames/forms by
+  default.
+- **Scan cycles log their duration** and warn when a cycle uses more
+  than half the configured `scan_interval` (Planning item #7), so
+  operators see cadence trouble before the ticker starts dropping
+  firings.
+- **Default slog logger carries an `agent` field** (Planning item #22)
+  from `logging.Setup(cfg, name)`, so a combined paired-deployment
+  stdout is attributable from the very first line. Callers in
+  `cmd/agent`, `cmd/wintermute`, and `cmd/neuromancer` updated.
+- **CI runs `govulncheck`** on every PR (Planning item #15) via a new
+  Woodpecker step.
+
+### Notes
+
+- `health.NewServer` signature gained a `staleAfter time.Duration`
+  parameter. Tests pass `0` to disable the freshness check; binaries
+  pass `3*cfg.Scanner.ScanInterval`. Callers outside this repo will
+  need a one-line update.
+- `logging.Setup` signature gained a `name string` parameter. Pass `""`
+  for the previous behaviour.
+
+---
+
 ## 26.02 — 2026-05-24
 
 ### Fixed

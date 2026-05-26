@@ -13,7 +13,7 @@ import (
 // startServer spins up a health server on a random port and registers cleanup.
 func startServer(t *testing.T, tracker *health.Tracker) (baseURL string) {
 	t.Helper()
-	srv := health.NewServer(":0", tracker)
+	srv := health.NewServer(":0", tracker, 0)
 	require.NoError(t, srv.Start())
 	t.Cleanup(func() { srv.Shutdown(context.Background()) }) //nolint:errcheck
 

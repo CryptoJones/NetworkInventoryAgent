@@ -11,16 +11,21 @@ import (
 
 // Server is a minimal HTTP server that exposes two endpoints:
 //
-//	GET /health  — 200 OK if the agent is healthy, 503 otherwise
+//	GET /health  — 200 OK if the agent is healthy AND has scanned recently,
+//	               503 otherwise
 //	GET /status  — JSON-encoded Status
 type Server struct {
-	addr    string
-	tracker *Tracker
-	srv     *http.Server
+	addr       string
+	tracker    *Tracker
+	staleAfter time.Duration
+	srv        *http.Server
 }
 
-func NewServer(addr string, tracker *Tracker) *Server {
-	s := &Server{addr: addr, tracker: tracker}
+// NewServer constructs a health server. staleAfter is the maximum age of the
+// most recent scan before /health flips to 503; pass 0 to disable the
+// freshness check (e.g. for tests). A typical value is 3×ScanInterval.
+func NewServer(addr string, tracker *Tracker, staleAfter time.Duration) *Server {
+	s := &Server{addr: addr, tracker: tracker, staleAfter: staleAfter}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
@@ -65,11 +70,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	if s.tracker.Get().Healthy {
-		w.WriteHeader(http.StatusOK)
+	st := s.tracker.Get()
+	if !st.Healthy {
+		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	w.WriteHeader(http.StatusServiceUnavailable)
+	// Stale-scan freshness check: a wedged scan loop will keep Healthy=true
+	// because nothing flips it, but LastScanAt will fall behind. Refuse 200
+	// once the gap exceeds staleAfter so orchestrators can restart us.
+	if s.staleAfter > 0 && st.LastScanAt != nil &&
+		time.Since(*st.LastScanAt) > s.staleAfter {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
