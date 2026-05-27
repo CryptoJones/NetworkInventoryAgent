@@ -17,6 +17,62 @@ _No unreleased changes._
 
 ---
 
+## 26.14 — 2026-05-27
+
+JSON query API (P2-04). Adds filterable, paginated `/api/v1/hosts` and
+`/api/v1/hosts/{ip}` endpoints alongside the existing bulk-export
+endpoints. Operators piping inventory into a CMDB / ticketing webhook /
+monitoring stack no longer have to download the full snapshot and grep.
+
+### Added
+
+- **`GET /api/v1/hosts`** — list hosts as JSON. Query parameters
+  (all optional, all AND together):
+  - `vendor` — exact match on `Host.Vendor`
+  - `device_type` — exact match on `Host.DeviceType`
+  - `hostname` — case-insensitive substring match
+  - `subnet` — CIDR; host IP must be inside it
+  - `port` — integer; host must have that TCP port open
+  - `limit` — page size (default 100, capped at 1000)
+  - `offset` — zero-based offset (default 0)
+
+  Response envelope:
+  ```json
+  {
+    "total":  42,    // total matching the filter, before pagination
+    "limit":  100,
+    "offset": 0,
+    "hosts":  [ {…full Host JSON…}, … ]
+  }
+  ```
+
+- **`GET /api/v1/hosts/{ip}`** — single-host detail. Returns
+  `{ "host": {…}, "ports": [ {…}, … ] }` so consumers don't need a
+  second round-trip for the ports table.
+
+- **`internal/admin/api.go`** — separated from the HTML-template
+  handlers in `handlers.go` so the two concerns can evolve
+  independently. New `internal/admin/api_test.go` covers every filter
+  dimension, combined filters, pagination edges, invalid input → 400,
+  unknown host → 404.
+
+### Notes
+
+- API errors return `{"error": "..."}` with appropriate 4xx/5xx codes.
+- Pagination is offset-based for simplicity. Cursor-based pagination
+  is the right choice past ~10k hosts; that's a future cleanup if
+  someone hits the scale.
+- The endpoints live under `/api/v1/` so future v2 changes can land
+  alongside without breaking consumers.
+- Filtering happens in Go after a `List()` from the host store. Fine
+  for the inventory sizes this agent targets (LAN-scale, hundreds to
+  low-thousands of hosts). Move to SQL `WHERE` clauses if needed.
+- The API is on the same admin server port (default 9090, loopback
+  bind by default). Off-loopback access is the operator's call —
+  same posture as the existing `/export.json` endpoint.
+
+---
+
 ## 26.13 — 2026-05-27
 
 Change detection + alert sinks (P2-02). The agent now diffs the host
