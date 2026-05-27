@@ -12,6 +12,13 @@ on:
 permissions:
   contents: read
 
+# Pre-empt the September 2026 Node.js 20 → 24 transition by opting in now.
+# Without this, every action run in this workflow logs a deprecation banner
+# and will hard-fail once Node 20 is removed from the runner image. See:
+#   https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build:
     runs-on: ubuntu-latest

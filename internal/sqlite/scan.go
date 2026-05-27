@@ -57,7 +57,7 @@ func (r *ScanRepo) List(ctx context.Context) ([]*models.Scan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list scans: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var scans []*models.Scan
 	for rows.Next() {

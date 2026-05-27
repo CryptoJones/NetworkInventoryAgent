@@ -31,7 +31,7 @@ func Run(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("query applied migrations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	applied := make(map[string]struct{})
 	for rows.Next() {

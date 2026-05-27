@@ -23,13 +23,20 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run holds the real entry-point logic so the os.Exit lives in main —
+// otherwise deferred cleanup (signal stop, db.Close) would be skipped on
+// the error paths (gocritic exitAfterDefer).
+func run() int {
 	dbPath := flag.String("db", "inventory.db", "path to SQLite database file")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Fprintf(os.Stdout, "console %s\n", runtime.VersionString())
-		return
+		fmt.Printf("console %s\n", runtime.VersionString())
+		return 0
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -38,14 +45,15 @@ func main() {
 	db, err := sqlite.Open(ctx, *dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "console: open database %q: %v\n", *dbPath, err)
-		os.Exit(1)
+		return 1
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	m := tui.New(ctx, db.Hosts(), db.Ports(), db.Scans())
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "console: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

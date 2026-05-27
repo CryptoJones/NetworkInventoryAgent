@@ -498,11 +498,12 @@ func (m Model) View() string {
 	b.WriteString(m.renderTabs())
 	b.WriteString("\n")
 
-	if m.loading {
+	switch {
+	case m.loading:
 		b.WriteString("\n  " + m.spin.View() + " Loading…\n")
-	} else if m.err != nil {
+	case m.err != nil:
 		b.WriteString(lipgloss.NewStyle().Foreground(colRed).Render("  Error: "+m.err.Error()) + "\n")
-	} else {
+	default:
 		switch m.current {
 		case viewDashboard:
 			b.WriteString(m.renderDashboard())
@@ -607,12 +608,12 @@ func renderScanRows(scans []*models.Scan) string {
 		if s.FinishedAt != nil {
 			status = styleStatusDone.Render("done")
 		}
-		b.WriteString(fmt.Sprintf("  %-20s  hosts:%-4d  started:%-22s  %s\n",
+		fmt.Fprintf(&b, "  %-20s  hosts:%-4d  started:%-22s  %s\n",
 			s.Subnet,
 			s.HostsFound,
 			fmtTime(s.StartedAt),
 			status,
-		))
+		)
 	}
 	return b.String()
 }
@@ -620,11 +621,11 @@ func renderScanRows(scans []*models.Scan) string {
 func renderHostRows(hosts []*models.Host) string {
 	var b strings.Builder
 	for _, h := range hosts {
-		b.WriteString(fmt.Sprintf("  %-16s  %-22s  %s\n",
+		fmt.Fprintf(&b, "  %-16s  %-22s  %s\n",
 			h.IPAddress,
 			orDash(h.Hostname),
 			fmtTime(h.LastSeen),
-		))
+		)
 	}
 	return b.String()
 }
@@ -655,10 +656,10 @@ func (m Model) renderHostDetail() string {
 		{"Last Seen", fmtTime(h.LastSeen)},
 	}
 	for _, kv := range meta {
-		b.WriteString(fmt.Sprintf("  %-18s %s\n",
+		fmt.Fprintf(&b, "  %-18s %s\n",
 			styleCardLabel.Render(kv.k+":"),
 			kv.v,
-		))
+		)
 	}
 	b.WriteString("\n")
 	b.WriteString(styleSectionHeader.Render(fmt.Sprintf("Open Ports — %d found", len(m.portList))) + "\n")

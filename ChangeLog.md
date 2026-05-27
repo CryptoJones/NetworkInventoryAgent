@@ -17,6 +17,64 @@ _No unreleased changes._
 
 ---
 
+## 26.09 — 2026-05-27
+
+Post-Planning.md tightening pass — clears the lint debt that 26.06's
+`golangci-lint` integration (item #40) catches but never fixed, and
+pre-empts the September 2026 Node.js 20 → 24 transition on GitHub
+Actions before it bites.
+
+### Tooling
+
+- **`golangci-lint run ./...` now passes clean.** The 21 baseline
+  findings (15× errcheck on `Close`/`Body.Close`, 4× staticcheck
+  QF1008/QF1012, 2× gocritic ifElseChain/exitAfterDefer) are all
+  resolved — either by explicit `_ =` discards on Close calls in defer
+  position (the Go idiom for "we don't care about this error") or by
+  rewriting the offending pattern. `make lint` is now meaningfully
+  enforceable.
+- **`cmd/console` `os.Exit` no longer skips deferred cleanup**
+  (gocritic exitAfterDefer). The real entry point moved into a `run()
+  int` helper and `main` calls `os.Exit(run())`, matching the
+  established Go idiom.
+- **`config.go` `MarshalJSON` drops the redundant `.Duration` selector**
+  (staticcheck QF1008).
+- **`cmd/console/tui` `WriteString(fmt.Sprintf(...))` rewritten to
+  `fmt.Fprintf(&b, ...)`** (staticcheck QF1012) at three sites.
+- **`render()` `loading`/`err`/default chain rewritten as `switch`**
+  (gocritic ifElseChain).
+
+### Added
+
+- **`renovate.json`** — Renovate Bot configuration for ongoing
+  supply-chain updates. Bundles `gomod` minor/patch into one weekly PR
+  (`go-deps`), auto-merges GitHub Actions and Docker base-image digest
+  bumps, schedules `lockFileMaintenance` monthly, and labels
+  vulnerability alerts immediately. No automerges on `gomod` majors —
+  those land as manually-reviewed PRs.
+- **`internal/tracing/tracing_test.go`** — covers `Setup` with an
+  empty endpoint, confirms `HTTPMiddleware` produces a valid span
+  inside the handler context, and verifies `HTTPClient` wraps an
+  injected base RoundTripper instead of replacing it.
+
+### Changed
+
+- **GitHub Actions opt in to Node.js 24 now.** Both `ci.yml` and
+  `release.yml` set `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`,
+  pre-empting the September 2026 Node.js 20 removal that would
+  otherwise hard-fail CI without warning.
+- **`internal/tracing` semconv bumped from v1.26.0 → v1.40.0** to
+  match the otel SDK's `resource.Default()` schema URL — the older
+  version produced "conflicting Schema URL" errors at `Setup` time.
+
+### Notes
+
+- No new Planning.md items remain. This sprint addresses real lint and
+  CI-deprecation debt rather than feature work; future cleanup
+  follow-ups should be tracked via issues or a new Planning.md entry.
+
+---
+
 ## 26.08 — 2026-05-27
 
 Final Planning.md sprint. Items #13 (peer TLS), #20 (OpenTelemetry tracing),

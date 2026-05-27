@@ -38,7 +38,7 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	}
 
 	if err := migrations.Run(ctx, writer); err != nil {
-		writer.Close()
+		_ = writer.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
@@ -58,7 +58,7 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	}
 	reader, err := openPool(ctx, path, readers)
 	if err != nil {
-		writer.Close()
+		_ = writer.Close()
 		return nil, fmt.Errorf("open reader pool: %w", err)
 	}
 
@@ -79,7 +79,7 @@ func openPool(ctx context.Context, path string, maxOpen int) (*sql.DB, error) {
 	}
 	for _, p := range pragmas {
 		if _, err := conn.ExecContext(ctx, p); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("set %q: %w", p, err)
 		}
 	}

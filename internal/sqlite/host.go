@@ -76,7 +76,7 @@ func (r *HostRepo) List(ctx context.Context) ([]*models.Host, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list hosts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var hosts []*models.Host
 	for rows.Next() {

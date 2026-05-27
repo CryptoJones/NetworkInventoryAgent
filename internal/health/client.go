@@ -74,7 +74,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("peer returned status %d", resp.StatusCode)
@@ -93,7 +93,7 @@ func (c *Client) FetchStatus(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, fmt.Errorf("fetch status failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var s Status
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxStatusBytes)).Decode(&s); err != nil {

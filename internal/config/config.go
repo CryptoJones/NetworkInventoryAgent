@@ -37,7 +37,7 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 }
 
 func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(d.Duration.String())
+	return json.Marshal(d.String())
 }
 
 // Config is the top-level configuration object.
@@ -236,7 +236,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("open config %q: %w", path, err)
 	}
 	if err == nil {
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if info, statErr := f.Stat(); statErr == nil {
 			fileMode = info.Mode().Perm()
 			loaded = true
