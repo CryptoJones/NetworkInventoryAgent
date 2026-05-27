@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Ronin48/NetworkInventoryAgent/internal/alerts"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/config"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/metrics"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/scanner"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/store"
+	"github.com/Ronin48/NetworkInventoryAgent/models"
 )
 
 // Agent runs a periodic scan loop and publishes results to a health.Tracker.
@@ -22,6 +24,7 @@ type Agent struct {
 	hosts   store.HostStore
 	scanner *scanner.Scanner
 	tracker *health.Tracker
+	alerts  alerts.Emitter
 	now     func() time.Time
 
 	// trigger is a buffered channel that lets external callers
@@ -31,7 +34,10 @@ type Agent struct {
 }
 
 // New creates an Agent. The caller is responsible for starting the health
-// server and watchdog; this constructor only wires the scan loop.
+// server and watchdog; this constructor only wires the scan loop. Pass
+// alerts.NoopEmitter() when alerts are unconfigured (the constructor
+// substitutes one if alertEmitter is nil to avoid an awkward call-site
+// guard at every binding).
 func New(
 	name string,
 	cfg config.ScannerConfig,
@@ -39,7 +45,11 @@ func New(
 	ports store.PortStore,
 	scans store.ScanStore,
 	tracker *health.Tracker,
+	alertEmitter alerts.Emitter,
 ) *Agent {
+	if alertEmitter == nil {
+		alertEmitter = alerts.NoopEmitter()
+	}
 	return &Agent{
 		name:  name,
 		cfg:   cfg,
@@ -58,6 +68,7 @@ func New(
 			EnrichARP:      cfg.EnrichARP,
 		}),
 		tracker: tracker,
+		alerts:  alertEmitter,
 		now:     time.Now,
 		trigger: make(chan struct{}, 1),
 	}
@@ -105,6 +116,15 @@ func (a *Agent) Run(ctx context.Context) {
 func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	log.Info("scan cycle started", "subnets", len(a.cfg.Subnets))
 	started := a.now()
+
+	// Snapshot the pre-cycle host inventory so we can diff it against
+	// the post-cycle list and fire HostDiscovered / HostVanished events.
+	// Snapshotting before the scan (rather than tracking what the
+	// scanner returned) means the diff correctly reflects "ground truth
+	// changed", including hosts the operator added or removed
+	// externally.
+	prevHosts := snapshotByIP(ctx, a.hosts, log)
+
 	cycleHosts := 0
 	cycleHealthy := true
 	for _, subnet := range a.cfg.Subnets {
@@ -123,6 +143,13 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	if pruned := a.pruneStale(ctx, log, started); pruned > 0 {
 		metrics.HostsPrunedTotal.Add(int64(pruned))
 		log.Info("pruned stale hosts", "count", pruned)
+	}
+
+	// Diff and fire events. Only meaningful when the cycle didn't
+	// itself fail mid-way — declaring hosts "vanished" because of a
+	// transient DB error would be alert spam.
+	if cycleHealthy {
+		a.emitChangeEvents(ctx, log, prevHosts, started)
 	}
 
 	// Use the actual DB count so the tracker reflects total accumulated
@@ -180,4 +207,60 @@ func (a *Agent) pruneStale(ctx context.Context, log *slog.Logger, now time.Time)
 		}
 	}
 	return pruned
+}
+
+// snapshotByIP lists the current host inventory keyed by IP. Used pre-
+// cycle so the change-detection diff has a stable view to compare
+// against. A List failure logs and returns nil — the diff will then
+// produce no events (better than misleading ones based on a partial set).
+func snapshotByIP(ctx context.Context, hs store.HostStore, log *slog.Logger) map[string]*models.Host {
+	hosts, err := hs.List(ctx)
+	if err != nil {
+		log.Warn("change-detect: pre-cycle snapshot failed", "err", err)
+		return nil
+	}
+	out := make(map[string]*models.Host, len(hosts))
+	for _, h := range hosts {
+		out[h.IPAddress] = h
+	}
+	return out
+}
+
+// emitChangeEvents compares the post-cycle host set with the pre-cycle
+// snapshot and fires one alert event per change. Discovered events use
+// the post-cycle enrichment; vanished events use the pre-cycle row
+// (since the post-cycle one is gone).
+func (a *Agent) emitChangeEvents(ctx context.Context, log *slog.Logger, prev map[string]*models.Host, cycleStart time.Time) {
+	curr := snapshotByIP(ctx, a.hosts, log)
+	if curr == nil {
+		return
+	}
+	for ip, h := range curr {
+		if _, was := prev[ip]; !was {
+			a.alerts.Emit(ctx, alerts.Event{
+				Type:       alerts.HostDiscovered,
+				IP:         ip,
+				Hostname:   h.Hostname,
+				MACAddress: h.MACAddress,
+				Vendor:     h.Vendor,
+				DeviceType: h.DeviceType,
+				Time:       cycleStart,
+				Agent:      a.name,
+			})
+		}
+	}
+	for ip, h := range prev {
+		if _, still := curr[ip]; !still {
+			a.alerts.Emit(ctx, alerts.Event{
+				Type:       alerts.HostVanished,
+				IP:         ip,
+				Hostname:   h.Hostname,
+				MACAddress: h.MACAddress,
+				Vendor:     h.Vendor,
+				DeviceType: h.DeviceType,
+				Time:       cycleStart,
+				Agent:      a.name,
+			})
+		}
+	}
 }

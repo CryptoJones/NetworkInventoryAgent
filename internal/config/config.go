@@ -49,6 +49,34 @@ type Config struct {
 	Admin    AdminConfig    `json:"admin"`
 	Watchdog WatchdogConfig `json:"watchdog"`
 	Tracing  TracingConfig  `json:"tracing,omitempty"`
+	Alerts   AlertsConfig   `json:"alerts,omitempty"`
+}
+
+// AlertsConfig configures change-detection event sinks. Either or both
+// sub-sections may be set; absence of both silently disables alerting.
+type AlertsConfig struct {
+	Webhook WebhookConfig `json:"webhook,omitempty"`
+	Syslog  SyslogConfig  `json:"syslog,omitempty"`
+}
+
+// WebhookConfig is the HTTP-POST-with-JSON sink.
+type WebhookConfig struct {
+	// URL is the receiver endpoint. Empty disables this sink.
+	URL string `json:"url,omitempty"`
+	// AuthHeader, if non-empty, is sent verbatim as the Authorization
+	// header (e.g. "Bearer abc123" or "Basic dXNlcjpwYXNz").
+	AuthHeader string `json:"auth_header,omitempty"`
+}
+
+// SyslogConfig is the RFC 5424 over UDP/TCP sink.
+type SyslogConfig struct {
+	// Addr is a URL like "udp://syslog.example.com:514" or "tcp://...".
+	// Empty disables this sink.
+	Addr string `json:"addr,omitempty"`
+	// Tag is the APP-NAME field. Default "network-inventory".
+	Tag string `json:"tag,omitempty"`
+	// Facility is the RFC 5424 facility number 0..23. Default 16 (local0).
+	Facility int `json:"facility,omitempty"`
 }
 
 // TracingConfig controls the OpenTelemetry exporter. When Endpoint is empty
