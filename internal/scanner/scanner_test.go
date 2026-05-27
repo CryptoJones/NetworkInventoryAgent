@@ -30,6 +30,16 @@ func (m *mockHostStore) Upsert(_ context.Context, h *models.Host) (int64, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if existing, ok := m.hosts[h.IPAddress]; ok {
+		// Mirror the sqlite UPSERT — every mutable field on the
+		// incoming row overwrites the stored one. Without this the
+		// mock silently differs from the real store on re-upsert,
+		// which the classifier path now exercises.
+		existing.MACAddress = h.MACAddress
+		existing.Hostname = h.Hostname
+		existing.OSFingerprint = h.OSFingerprint
+		existing.Vendor = h.Vendor
+		existing.DeviceType = h.DeviceType
+		existing.LastSeen = h.LastSeen
 		return existing.ID, nil
 	}
 	m.nextID++
@@ -356,6 +366,41 @@ func acceptLoop(ln net.Listener) {
 		}
 		c.Close()
 	}
+}
+
+func TestScanner_Scan_PopulatesDeviceType(t *testing.T) {
+	// Bind 11211 (memcached) on 127.0.0.1. It's almost never in use on
+	// developer machines, and it's a port the classifier recognises
+	// unambiguously. If the bind fails (some CI image), skip — the
+	// classifier wiring is also covered by classify_test.go.
+	ln, err := net.Listen("tcp", "127.0.0.1:11211")
+	if err != nil {
+		t.Skipf("cannot bind 127.0.0.1:11211 (likely in use): %v", err)
+	}
+	defer ln.Close()
+	go acceptLoop(ln)
+
+	hosts := newMockHostStore()
+	ports := newMockPortStore()
+	scans := newMockScanStore()
+	s := scanner.New(scanner.Options{
+		Hosts:      hosts,
+		Ports:      ports,
+		Scans:      scans,
+		Timeout:    500 * time.Millisecond,
+		Workers:    4,
+		MaxHosts:   65535,
+		ProbePorts: []int{11211},
+	})
+
+	n, err := s.Scan(t.Context(), "127.0.0.1/32")
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	host, err := hosts.GetByIP(t.Context(), "127.0.0.1")
+	require.NoError(t, err)
+	assert.Equal(t, "database (memcached)", host.DeviceType,
+		"classify() should have flipped DeviceType after the scan via a second host upsert")
 }
 
 func TestScanner_Scan_DoesNotProbeNetworkOrBroadcast(t *testing.T) {
