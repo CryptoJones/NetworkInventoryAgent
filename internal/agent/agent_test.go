@@ -12,11 +12,32 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Ronin48/NetworkInventoryAgent/internal/agent"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/alerts"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/config"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/store"
 	"github.com/Ronin48/NetworkInventoryAgent/models"
 )
+
+// recordingEmitter captures events for diff assertions.
+type recordingEmitter struct {
+	mu     sync.Mutex
+	events []alerts.Event
+}
+
+func (r *recordingEmitter) Emit(_ context.Context, ev alerts.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, ev)
+}
+
+func (r *recordingEmitter) snapshot() []alerts.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]alerts.Event, len(r.events))
+	copy(out, r.events)
+	return out
+}
 
 // --- minimal mock stores ---
 
@@ -27,6 +48,13 @@ type mockHostStore struct {
 	listErr   error
 	countErr  error
 	deleteErr error
+	// onListInsert, when non-nil, is upserted into the store BEFORE the
+	// SECOND List() call returns — simulating "a new host appeared
+	// between the pre- and post-cycle snapshots" without needing a real
+	// scanner. Counted by listCalls so the hook fires exactly once,
+	// during the post-cycle list.
+	onListInsert *models.Host
+	listCalls    int
 }
 
 func newMockHostStore() *mockHostStore {
@@ -59,6 +87,14 @@ func (m *mockHostStore) List(_ context.Context) ([]*models.Host, error) {
 	defer m.mu.Unlock()
 	if m.listErr != nil {
 		return nil, m.listErr
+	}
+	m.listCalls++
+	if m.onListInsert != nil && m.listCalls == 2 {
+		m.nextID++
+		clone := *m.onListInsert
+		clone.ID = m.nextID
+		m.hosts[clone.ID] = &clone
+		m.onListInsert = nil
 	}
 	out := make([]*models.Host, 0, len(m.hosts))
 	for _, h := range m.hosts {
@@ -147,6 +183,7 @@ func TestAgent_TriggerCoalesces(t *testing.T) {
 		mockPortStore{},
 		newMockScanStore(),
 		health.NewTracker("test"),
+		nil,
 	)
 	assert.True(t, a.Trigger(), "first Trigger() must enqueue")
 	assert.False(t, a.Trigger(), "second Trigger() must coalesce, not enqueue")
@@ -168,6 +205,7 @@ func TestAgent_CycleMarksHealthyOnCleanRun(t *testing.T) {
 		mockPortStore{},
 		newMockScanStore(),
 		tracker,
+		nil,
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
@@ -196,6 +234,7 @@ func TestAgent_CycleMarksUnhealthyOnCountFailure(t *testing.T) {
 		mockPortStore{},
 		newMockScanStore(),
 		tracker,
+		nil,
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
@@ -232,6 +271,7 @@ func TestAgent_PrunesStaleHosts(t *testing.T) {
 		mockPortStore{},
 		newMockScanStore(),
 		tracker,
+		nil,
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
@@ -265,6 +305,7 @@ func TestAgent_PruneDisabledWithoutTTL(t *testing.T) {
 		mockPortStore{},
 		newMockScanStore(),
 		health.NewTracker("test"),
+		nil,
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
@@ -274,4 +315,89 @@ func TestAgent_PruneDisabledWithoutTTL(t *testing.T) {
 	remaining, err := hosts.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, remaining, 1, "with HostTTL=0 no pruning should happen")
+}
+
+// TestAgent_EmitsHostVanishedOnPrune verifies that a host pruned via
+// the HostTTL path produces a host.vanished alert. The discovered path
+// is exercised indirectly: a host present in the pre-cycle snapshot but
+// gone from the post-cycle snapshot (due to prune) must alert.
+func TestAgent_EmitsHostVanishedOnPrune(t *testing.T) {
+	hosts := newMockHostStore()
+	_, err := hosts.Upsert(context.Background(), &models.Host{
+		IPAddress: "10.0.0.42",
+		LastSeen:  time.Now().Add(-24 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	rec := &recordingEmitter{}
+	a := agent.New(
+		"test",
+		config.ScannerConfig{
+			Subnets:      nil,
+			ScanInterval: config.Duration{Duration: 50 * time.Millisecond},
+			HostTTL:      config.Duration{Duration: time.Hour},
+		},
+		hosts,
+		mockPortStore{},
+		newMockScanStore(),
+		health.NewTracker("test"),
+		rec,
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	a.Run(ctx)
+
+	evs := rec.snapshot()
+	require.NotEmpty(t, evs, "prune should have fired at least one vanished event")
+	found := false
+	for _, ev := range evs {
+		if ev.Type == alerts.HostVanished && ev.IP == "10.0.0.42" {
+			found = true
+			assert.Equal(t, "test", ev.Agent)
+		}
+	}
+	assert.True(t, found, "expected host.vanished for 10.0.0.42; got %v", evs)
+}
+
+// TestAgent_EmitsHostDiscoveredOnNewHost verifies that a host inserted
+// mid-cycle (here, pre-seeded via the mock between snapshots) produces
+// a host.discovered alert.
+func TestAgent_EmitsHostDiscoveredOnNewHost(t *testing.T) {
+	hosts := newMockHostStore()
+	hosts.onListInsert = &models.Host{
+		IPAddress:  "10.0.0.99",
+		Hostname:   "newbox.local",
+		DeviceType: "linux-host",
+		LastSeen:   time.Now(),
+	}
+
+	rec := &recordingEmitter{}
+	a := agent.New(
+		"test",
+		config.ScannerConfig{
+			Subnets:      nil,
+			ScanInterval: config.Duration{Duration: 50 * time.Millisecond},
+		},
+		hosts,
+		mockPortStore{},
+		newMockScanStore(),
+		health.NewTracker("test"),
+		rec,
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	a.Run(ctx)
+
+	evs := rec.snapshot()
+	found := false
+	for _, ev := range evs {
+		if ev.Type == alerts.HostDiscovered && ev.IP == "10.0.0.99" {
+			found = true
+			assert.Equal(t, "newbox.local", ev.Hostname)
+			assert.Equal(t, "linux-host", ev.DeviceType)
+		}
+	}
+	assert.True(t, found, "expected host.discovered for 10.0.0.99; got %v", evs)
 }

@@ -22,6 +22,7 @@ import (
 
 	"github.com/Ronin48/NetworkInventoryAgent/internal/admin"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/agent"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/alerts"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/config"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/logging"
@@ -131,7 +132,13 @@ func Run(opts Options) int {
 	}
 	slog.Info("health server started", "addr", healthSrv.Addr(), "tls", healthTLS != nil)
 
-	a := agent.New(opts.Name, cfg.Scanner, db.Hosts(), db.Ports(), db.Scans(), tracker)
+	alertSinks := buildAlertSinks(cfg.Alerts)
+	mux := alerts.NewMultiplexer(alertSinks...)
+	if len(alertSinks) > 0 {
+		slog.Info("alert sinks configured", "count", len(alertSinks))
+	}
+
+	a := agent.New(opts.Name, cfg.Scanner, db.Hosts(), db.Ports(), db.Scans(), tracker, mux)
 
 	adminSrv, err := admin.NewServer(
 		cfg.Admin.Addr, opts.Name,
@@ -185,8 +192,29 @@ func Run(opts Options) int {
 	if err := traceShutdown(shutdownCtx); err != nil {
 		slog.Warn("tracer shutdown error", "err", err)
 	}
+	mux.Close()
 	slog.Info("agent stopped", "name", opts.Name)
 	return 0
+}
+
+// buildAlertSinks instantiates the configured event sinks. A sink that
+// fails to construct (bad syslog URL, etc.) is logged and skipped; the
+// other sinks still ship. Returns nil when nothing is configured, which
+// NewMultiplexer handles cleanly.
+func buildAlertSinks(cfg config.AlertsConfig) []alerts.Sink {
+	var sinks []alerts.Sink
+	if w := alerts.NewWebhookSink(cfg.Webhook.URL, cfg.Webhook.AuthHeader); w != nil {
+		sinks = append(sinks, w)
+	}
+	if cfg.Syslog.Addr != "" {
+		s, err := alerts.NewSyslogSink(cfg.Syslog.Addr, cfg.Syslog.Tag, cfg.Syslog.Facility)
+		if err != nil {
+			slog.Warn("syslog sink disabled", "err", err)
+		} else if s != nil {
+			sinks = append(sinks, s)
+		}
+	}
+	return sinks
 }
 
 // buildPeerClient assembles the watchdog's health.Client with a

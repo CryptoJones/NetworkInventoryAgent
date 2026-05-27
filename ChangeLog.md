@@ -17,6 +17,74 @@ _No unreleased changes._
 
 ---
 
+## 26.13 — 2026-05-27
+
+Change detection + alert sinks (P2-02). The agent now diffs the host
+inventory pre- and post-cycle and emits `host.discovered` /
+`host.vanished` events to a configurable HTTP webhook, syslog, or both.
+Operators no longer have to grep logs to notice a new device appeared.
+
+### Added
+
+- **`internal/alerts` package** — `Event` (JSON-tagged for wire reuse),
+  `EventType` (`host.discovered`, `host.vanished`), `Emitter`
+  interface, `Multiplexer` that fans events out to N sinks in
+  parallel, `NoopEmitter` for the alerts-disabled deployment.
+- **WebhookSink** — HTTP POST JSON. One retry on transient failures
+  (network error or 5xx); 4xx is final. Optional `Authorization`
+  header passed verbatim (so `Bearer …` and `Basic …` both work
+  without per-scheme code).
+- **SyslogSink** — RFC 5424 over UDP/TCP. Hand-rolled because
+  stdlib `log/syslog` is Unix-only and the agent runs on Windows.
+  Message body is the same JSON as the webhook payload, so syslog
+  parsers (rsyslog mmjsonparse, syslog-ng, Splunk) get structured
+  fields for free.
+- **`config.AlertsConfig`** — new optional top-level section:
+  ```json
+  "alerts": {
+    "webhook": { "url": "https://hooks.example/x", "auth_header": "Bearer …" },
+    "syslog":  { "addr": "udp://syslog.example:514", "tag": "inventory" }
+  }
+  ```
+  Either or both sub-sections may be set; absence of both silently
+  disables alerting (no change for existing deployments).
+
+### Changed
+
+- **`agent.New` gained an `alerts.Emitter` parameter** (8th positional
+  arg). Pass `nil` for the noop emitter; the constructor substitutes
+  one automatically so tests stay terse.
+- **`agent.runCycle` snapshots the host inventory** before scanning
+  and again after, then diffs the two by IP. Discovered hosts get the
+  fresh enrichment (Hostname/Vendor/DeviceType); vanished hosts get
+  the last-known pre-cycle row (since the post-cycle one is gone).
+  Cycle-failed runs intentionally skip the diff to avoid alert spam
+  on transient DB blips.
+- **`mockHostStore.Upsert`** in the agent test suite now mirrors the
+  sqlite UPSERT (overwrite-on-conflict) so test stores stay parity
+  with production — same fix landed in the scanner mock during 26.11.
+
+### Tests
+
+- 11 new tests covering: multiplexer fan-out, sibling sinks surviving
+  a peer-sink error, webhook auth-header round-trip, 5xx retry, 4xx
+  no-retry, nil-on-empty-URL/addr guards, syslog RFC 5424 format
+  against a real UDP listener (PRI calculation, JSON MSG, MSGID =
+  event type), bad-scheme rejection, agent-level diff producing
+  `host.vanished` on prune and `host.discovered` on a mid-cycle insert.
+
+### Notes
+
+- Sinks deliver in goroutines. Multiplexer.Emit returns immediately;
+  failures show up in slog warnings, not back at the call site. This
+  matches operator expectations for alert pipelines and keeps the
+  scan-cycle hot path off the network.
+- Port-level events (`port.appeared` / `port.vanished`) and watchdog
+  events are deliberately deferred — host-level coverage satisfies the
+  headline operator ask first.
+
+---
+
 ## 26.12 — 2026-05-27
 
 Service / application discovery (P2-01). Turns "port 22 is open" into
