@@ -10,16 +10,23 @@ The system is designed to run as **two cooperating agent instances** — named *
 
 ## Features
 
-- **Active discovery** — concurrent TCP-probe scanning across configurable CIDR ranges to find live hosts
-- **Asset fingerprinting** — records IP address, open ports, services, OS fingerprint, vendor, and device type per host
-- **Continuous monitoring** — periodic re-scans detect new devices, removed devices, and configuration changes over time
-- **Mutual watchdog** — two agent instances cross-check each other for liveness, scan freshness, and inventory consistency
-- **Web admin console** — dark-themed browser UI with dashboard, host inventory, per-host port detail, and scan history; auto-starts alongside each agent
-- **Terminal UI console** — full-featured Bubbletea TUI (`cmd/console`) providing the same views as the web console; connects directly to any agent's SQLite database
-- **Structured logging** — human-readable text or machine-readable JSON log output via `log/slog`
-- **Graceful shutdown** — SIGINT / SIGTERM cancel in-flight scans cleanly before exit
-- **Docker-ready** — single multi-stage image, `docker compose up` starts the full Wintermute/Neuromancer pair
-- **Low footprint** — no external server process; the database is a single SQLite file
+- **Active discovery** — concurrent TCP-probe scanning across configurable CIDR ranges to find live hosts. Optional deep TCP and UDP probe passes per profile.
+- **Asset fingerprinting** — banner-grab on SSH, FTP, SMTP, POP3, IMAP, HTTP, HTTPS (with TLS cert peek), MySQL handshake, Telnet. Stored per-port in `Port.Service`.
+- **Device-type classifier** — heuristic rules over (vendor, OS banner, open ports) tag hosts as printer / router / hypervisor / windows-host / windows-dc / database (mysql|postgres|…) / mail-server / linux-host / appliance / iot-broker / embedded.
+- **MAC + vendor enrichment** — `/proc/net/arp` lookup on Linux + embedded OUI prefix table for ~80 common vendors.
+- **Per-subnet scan profiles** — aggressive hourly deep scans on critical infra, lazy daily liveness on guest networks, all in one config.
+- **Change detection + alerts** — diffs host inventory each cycle; fires `host.discovered` / `host.vanished` events to HTTP webhook and/or RFC 5424 syslog.
+- **JSON query API** — `/api/v1/hosts` with filters (vendor, device type, hostname, subnet, port) and pagination; `/api/v1/hosts/{ip}` with nested ports.
+- **Continuous monitoring** — periodic re-scans detect new devices, removed devices, and configuration changes over time.
+- **Mutual watchdog** — two agent instances cross-check each other for liveness, scan freshness, and inventory consistency. Optional mTLS between peers.
+- **Web admin console** — dark-themed browser UI with dashboard, host inventory, per-host port detail, scan history, watchdog peer status; auto-starts alongside each agent.
+- **Terminal UI console** — full-featured Bubbletea TUI (`cmd/console`) providing the same views as the web console; connects directly to any agent's SQLite database.
+- **Prometheus `/metrics`** — counters for scans, probes, DB errors, watchdog events, alerts; gauges for host count and peer-up state. Dependency-free exposer.
+- **OpenTelemetry tracing** — OTLP/HTTP exporter, W3C TraceContext propagation across the watchdog peer hop.
+- **Structured logging** — human-readable text or machine-readable JSON log output via `log/slog`.
+- **Graceful shutdown** — SIGINT / SIGTERM cancel in-flight scans cleanly before exit.
+- **Multi-platform releases** — signed binaries (cosign keyless OIDC) for linux/darwin/windows × amd64/arm64, plus a multi-arch Docker image on `ghcr.io`. CycloneDX SBOMs per archive.
+- **Low footprint** — no external server process; the database is a single SQLite file.
 
 ## Requirements
 
@@ -326,21 +333,82 @@ Each agent reads a JSON config file and then applies environment variable overri
 | Key | Default | Description |
 |-----|---------|-------------|
 | `database.path` | `inventory.db` | SQLite database file. Use `:memory:` for tests. |
-| `scanner.subnets` | `[]` | CIDR ranges to scan |
-| `scanner.scan_interval` | `5m` | How often to re-scan the network |
-| `scanner.timeout` | `2s` | Per-host TCP probe timeout (bounds the parallel probe across all ports) |
-| `scanner.workers` | `50` | Concurrent probe goroutines per subnet scan |
-| `scanner.max_hosts` | `65535` | Maximum usable addresses per subnet; larger subnets are rejected |
-| `log.level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
-| `log.format` | `text` | Log format: `text` (human) or `json` (machine) |
-| `health.addr` | `127.0.0.1:8080` | Address the health HTTP server listens on |
-| `admin.addr` | `127.0.0.1:9090` | Address the web admin console listens on |
-| `watchdog.peer_addr` | — | Base URL of the partner agent's health server |
-| `watchdog.interval` | `30s` | How often the watchdog checks the partner |
-| `watchdog.max_host_drift_pct` | `50.0` | Max % host-count difference before a warning |
-| `watchdog.max_failures` | `3` | Consecutive liveness failures before declaring peer DOWN |
+| **Scanner — global defaults** | | |
+| `scanner.subnets` | `[]` | Legacy flat CIDR list. Mutually exclusive with `scanner.profiles`. |
+| `scanner.profiles` | `[]` | Per-subnet override list (see below). |
+| `scanner.scan_interval` | `5m` | How often to re-scan; default for any profile that doesn't set its own. |
+| `scanner.timeout` | `2s` | Per-host TCP probe timeout. |
+| `scanner.workers` | `50` | GLOBAL concurrent probe cap across every subnet (not per-subnet). |
+| `scanner.max_hosts` | `65535` | Maximum usable addresses per subnet; larger subnets are rejected. |
+| `scanner.probe_ports` | `[22, 80, 443, 8080]` | TCP liveness ports — host alive if any answer. |
+| `scanner.deep_probe` | `false` | Second-pass scan of `deep_probe_ports` on every live host. |
+| `scanner.deep_probe_ports` | `top-services list` | TCP ports for the deep pass when `deep_probe` is on. |
+| `scanner.udp_ports` | `[]` | UDP ports to probe per live host. Empty disables UDP probing. |
+| `scanner.enrich_arp` | `false` | Populate Host.MACAddress + Vendor from `/proc/net/arp` (Linux). |
+| `scanner.host_ttl` | `0` (disabled) | Hosts not seen within this duration are deleted at the end of each cycle. |
+| **Scanner — per-subnet profile (each item in `scanner.profiles`)** | | |
+| `subnet` | required | CIDR for this profile. Must be unique. |
+| `scan_interval` | inherits global | Per-profile scan cadence. |
+| `timeout` | inherits global | Per-profile dial budget. |
+| `probe_ports` | inherits global | Per-profile liveness ports. |
+| `deep_probe` | inherits global | Per-profile deep probing (bool). |
+| `deep_probe_ports` | inherits global | Per-profile deep ports. |
+| `udp_ports` | inherits global | Per-profile UDP ports. |
+| `enrich_arp` | inherits global | Per-profile ARP enrichment (bool). |
+| **Log** | | |
+| `log.level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error`. |
+| `log.format` | `text` | Log format: `text` (human) or `json` (machine). |
+| **Health server** | | |
+| `health.addr` | `127.0.0.1:8080` | Listen address for `/health`, `/status`, `/metrics`. |
+| `health.auth_token` | — | Bearer token; required when `health.addr` is off-loopback. |
+| `health.tls_cert_path` | — | When set with `tls_key_path`, serves HTTPS. |
+| `health.tls_key_path` | — | Private key matching `tls_cert_path`. |
+| `health.client_ca_path` | — | When set, requires mTLS (clients must present a cert signed by this CA). |
+| **Admin console** | | |
+| `admin.addr` | `127.0.0.1:9090` | Listen address for the admin console + `/api/v1/*`. |
+| **Watchdog** | | |
+| `watchdog.peer_addr` | — | Base URL of the partner agent's health server. |
+| `watchdog.peer_token` | — | Bearer token sent to the peer. Must match peer's `health.auth_token`. |
+| `watchdog.interval` | `30s` | How often the watchdog checks the partner. |
+| `watchdog.max_host_drift_pct` | `50.0` | Max % host-count difference before a warning. |
+| `watchdog.max_failures` | `3` | Consecutive liveness failures before declaring peer DOWN. |
+| `watchdog.tls.ca_cert_path` | — | Project CA the peer's cert must chain to. |
+| `watchdog.tls.client_cert_path` | — | Client cert for mTLS to the peer. |
+| `watchdog.tls.client_key_path` | — | Client key matching `client_cert_path`. |
+| `watchdog.tls.server_name` | — | SNI / cert-verification hostname override. |
+| **Tracing** | | |
+| `tracing.endpoint` | — | OTLP/HTTP collector URL. Empty = no-op exporter (instrumentation active, spans discarded). |
+| **Alerts** | | |
+| `alerts.webhook.url` | — | HTTP POST target for host.discovered / host.vanished events. |
+| `alerts.webhook.auth_header` | — | Verbatim `Authorization` header (e.g. `Bearer abc123`). |
+| `alerts.syslog.addr` | — | `udp://host:514` or `tcp://host:514`. RFC 5424. |
+| `alerts.syslog.tag` | `network-inventory` | APP-NAME field. |
+| `alerts.syslog.facility` | `16` (local0) | RFC 5424 facility number 0..23. |
 
 Duration values in the JSON config accept human-readable strings (`"5m"`, `"30s"`, `"2h"`) in addition to raw nanosecond integers.
+
+#### Per-subnet profile example
+
+Aggressive hourly deep scans on critical infrastructure, lazy daily liveness on guest network:
+
+```json
+{
+  "scanner": {
+    "profiles": [
+      { "subnet": "10.0.0.0/24", "scan_interval": "1h", "deep_probe": true, "enrich_arp": true },
+      { "subnet": "192.168.99.0/24", "scan_interval": "24h" }
+    ],
+    "scan_interval": "5m",
+    "timeout": "2s",
+    "workers": 50,
+    "host_ttl": "168h"
+  }
+}
+```
+
+Profiles inherit any field they don't set from the `scanner.*` globals.
+`scanner.subnets` and `scanner.profiles` are mutually exclusive — boot
+fails fast if both are set.
 
 ### Environment variable overrides
 
@@ -358,10 +426,28 @@ Duration values in the JSON config accept human-readable strings (`"5m"`, `"30s"
 
 Both agents expose two HTTP endpoints used by the watchdog and for external monitoring:
 
+**Health server** (default `127.0.0.1:8080`, bearer-gated when off-loopback):
+
 | Endpoint | Method | Response |
 |----------|--------|----------|
-| `/health` | GET | `200 OK` if healthy, `503 Service Unavailable` if not |
+| `/health` | GET | `200 OK` if healthy and last scan is fresh; `503 Service Unavailable` otherwise |
 | `/status` | GET | JSON-encoded status snapshot (see below) |
+| `/metrics` | GET | Prometheus text exposition format — counters for scans, probes, DB, watchdog, alerts; gauges for host count + peer-up state |
+
+**Admin console** (default `127.0.0.1:9090`, unauthenticated — keep loopback unless on a trusted segment):
+
+| Endpoint | Method | Response |
+|----------|--------|----------|
+| `/` | GET | HTML dashboard |
+| `/hosts` | GET | HTML host inventory |
+| `/hosts/{ip}` | GET | HTML host detail (with ports) |
+| `/scans` | GET | HTML scan history |
+| `/watchdog` | GET | HTML watchdog peer-status panel |
+| `/export.json` | GET | Full inventory snapshot as JSON |
+| `/export.csv` | GET | Full inventory snapshot as CSV |
+| `/api/v1/hosts` | GET | Filterable JSON list — `?vendor=`, `?device_type=`, `?hostname=`, `?subnet=`, `?port=`, `?limit=`, `?offset=` |
+| `/api/v1/hosts/{ip}` | GET | Single-host JSON with nested ports |
+| `/scan` | POST | Trigger an out-of-cycle scan (CSRF-gated) |
 
 ### `/status` response
 
@@ -433,12 +519,31 @@ internal/
   scanner/        Concurrent TCP-probe network scanner. Skips IPv4
                   network and broadcast addresses. Enforces a
                   configurable per-subnet host limit. Uses a worker
-                  pool (semaphore) to bound parallelism.
+                  pool (semaphore) to bound parallelism. Banner-grabs
+                  open ports (banner.go) and tags hosts with a
+                  device type (classify.go). ARP enrichment via
+                  arp.go on Linux.
 
-  agent/          Periodic scan loop. Drives the scanner across all
-                  configured subnets, updates the health Tracker
-                  after each cycle with the total DB host count,
-                  and blocks until context cancel.
+  agent/          Periodic scan loop. Resolves per-subnet profiles,
+                  drives the scanner across due profiles, runs the
+                  host TTL prune, diffs the inventory and emits
+                  change events, updates the health Tracker.
+
+  alerts/         host.discovered / host.vanished event subsystem.
+                  Multiplexer fans out to WebhookSink (HTTP POST
+                  JSON) and SyslogSink (RFC 5424 over UDP/TCP).
+
+  metrics/        Dependency-free Prometheus text-format exposer.
+                  Counters and gauges incremented as side effects
+                  of the agent's normal work.
+
+  tracing/        OpenTelemetry wiring. OTLP/HTTP exporter,
+                  HTTPMiddleware for incoming requests, HTTPClient
+                  for outgoing requests.
+
+  tlsutil/        Shared *tls.Config builder. Used by both the
+                  health server (inbound TLS / optional mTLS) and
+                  the watchdog client (CA pinning to a project CA).
 
   logging/        Shared slog initialisation helper used by all
                   agent binaries.
