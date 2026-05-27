@@ -518,4 +518,15 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("INVENTORY_PEER_TOKEN"); v != "" {
 		cfg.Watchdog.PeerToken = v
 	}
+	// Listener addresses also come from env so containerised deployments
+	// can repoint without rewriting the JSON file (e.g.
+	// INVENTORY_HEALTH_ADDR=0.0.0.0:18080 + INVENTORY_AUTH_TOKEN=... in
+	// the orchestrator). Validation in validate() catches off-loopback
+	// binds without a token regardless of which surface set the addr.
+	if v := os.Getenv("INVENTORY_HEALTH_ADDR"); v != "" {
+		cfg.Health.Addr = v
+	}
+	if v := os.Getenv("INVENTORY_ADMIN_ADDR"); v != "" {
+		cfg.Admin.Addr = v
+	}
 }

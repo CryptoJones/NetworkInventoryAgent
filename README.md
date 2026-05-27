@@ -349,6 +349,10 @@ Duration values in the JSON config accept human-readable strings (`"5m"`, `"30s"
 | `INVENTORY_DB_PATH` | `database.path` |
 | `INVENTORY_LOG_LEVEL` | `log.level` |
 | `INVENTORY_LOG_FORMAT` | `log.format` |
+| `INVENTORY_HEALTH_ADDR` | `health.addr` |
+| `INVENTORY_ADMIN_ADDR` | `admin.addr` |
+| `INVENTORY_AUTH_TOKEN` | `health.auth_token` |
+| `INVENTORY_PEER_TOKEN` | `watchdog.peer_token` |
 
 ## Health endpoints
 

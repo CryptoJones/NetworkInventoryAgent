@@ -99,6 +99,8 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	t.Setenv("INVENTORY_DB_PATH", "/env/override.db")
 	t.Setenv("INVENTORY_LOG_LEVEL", "warn")
 	t.Setenv("INVENTORY_LOG_FORMAT", "json")
+	t.Setenv("INVENTORY_HEALTH_ADDR", "127.0.0.1:18080")
+	t.Setenv("INVENTORY_ADMIN_ADDR", "127.0.0.1:19090")
 
 	cfg, err := config.Load("/nonexistent/config.json")
 	require.NoError(t, err)
@@ -106,6 +108,8 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	assert.Equal(t, "/env/override.db", cfg.Database.Path)
 	assert.Equal(t, "warn", cfg.Log.Level)
 	assert.Equal(t, "json", cfg.Log.Format)
+	assert.Equal(t, "127.0.0.1:18080", cfg.Health.Addr)
+	assert.Equal(t, "127.0.0.1:19090", cfg.Admin.Addr)
 }
 
 func TestLoad_EnvOverridesFile(t *testing.T) {
