@@ -2,6 +2,16 @@
 
 Thank you for your interest in contributing. This document covers everything you need to get started.
 
+## Authoritative remote
+
+**Codeberg is the authoritative remote** for this project:
+<https://codeberg.org/CryptoJones/NetworkInventoryAgent>. The GitHub copy at
+<https://github.com/CryptoJones/NetworkInventoryAgent> is a mirror — it has
+identical CI, the same issue/PR templates, and the same CODEOWNERS, but
+issues filed there may be moved to Codeberg or asked to be re-filed there
+so the project's history stays in one place. PRs are accepted on either
+remote; the maintainer mirrors merged work back to the other side.
+
 ## Table of contents
 
 - [Getting started](#getting-started)

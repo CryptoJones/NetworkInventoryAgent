@@ -30,10 +30,21 @@ steps:
     commands:
       - golangci-lint run ./...
 
-  docker:
-    image: plugins/docker
-    settings:
-      repo: networkinventoryagent
-      dry_run: true
-    when:
-      event: push
+  # Build the image and run the binary inside it with -version to confirm
+  # the published runtime layer actually executes — the previous dry_run: true
+  # step compiled an image and threw it away without ever running it, which
+  # missed GLIBC version skew and missing CA-bundle bugs that compile-time
+  # checks can't see.
+  docker_build:
+    image: docker:27
+    commands:
+      - docker build -t networkinventoryagent:ci .
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  docker_smoke:
+    image: docker:27
+    commands:
+      - docker run --rm networkinventoryagent:ci -version
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

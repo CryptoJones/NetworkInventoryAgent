@@ -11,8 +11,11 @@ package runtime
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
+	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -21,9 +24,35 @@ import (
 	"github.com/Ronin48/NetworkInventoryAgent/internal/config"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/logging"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/metrics"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/sqlite"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/watchdog"
 )
+
+// Version is overridable at link time via -ldflags="-X .../runtime.Version=...".
+// Defaults to whatever runtime/debug can recover from the build (commit hash
+// when built from a checkout, "unknown" otherwise). Kept as a single source
+// of truth for both -version and any future User-Agent / metric exposition.
+var Version = ""
+
+// versionString returns a printable version. Falls back to the VCS revision
+// embedded by `go build` when Version is empty, which covers the
+// non-goreleaser local-build case.
+func versionString() string {
+	if Version != "" {
+		return Version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			return s.Value
+		}
+	}
+	return "dev"
+}
 
 // Options controls how Run sets up the binary.
 type Options struct {
@@ -44,7 +73,13 @@ type Options struct {
 // scan loop, then blocks until SIGINT/SIGTERM. Returns an exit code.
 func Run(opts Options) int {
 	configPath := flag.String("config", opts.DefaultConfigPath, "path to JSON config file")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Fprintf(os.Stdout, "%s %s\n", opts.Name, versionString())
+		return 0
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -96,6 +131,10 @@ func Run(opts Options) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// PeerUp gauge is -1 when no watchdog is configured so Grafana panels can
+	// distinguish "peer down" (0) from "no peer configured" (-1).
+	metrics.PeerUp.Set(-1)
 
 	if opts.WithWatchdog && cfg.Watchdog.PeerAddr != "" {
 		wd := watchdog.New(watchdog.Config{

@@ -15,21 +15,63 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ronin48/NetworkInventoryAgent/internal/metrics"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/store"
 	"github.com/Ronin48/NetworkInventoryAgent/models"
 )
 
-// defaultProbePorts is used when ScannerConfig.ProbePorts is empty.
+// defaultProbePorts is used when Options.ProbePorts is empty.
 var defaultProbePorts = []int{22, 80, 443, 8080}
+
+// defaultDeepProbePorts is used when DeepProbe=true and DeepProbePorts is empty.
+// It is a deliberately short "top services" list rather than nmap's top-1000;
+// scanning a /24 with 1000 ports per live host is rarely what an operator
+// wants on a 5-minute cadence.
+var defaultDeepProbePorts = []int{
+	21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445, 465, 587,
+	993, 995, 1433, 1723, 2049, 3000, 3306, 3389, 5432, 5900, 6379, 8000,
+	8080, 8443, 8888, 9090, 9100, 11211, 27017,
+}
+
+// Options bundles every Scanner constructor parameter. The struct form keeps
+// the call sites readable as the agent grows new probe stages — passing
+// twelve positional args at every binding boundary was getting unwieldy.
+type Options struct {
+	// Hosts and Scans must be non-nil; Ports may be nil for liveness-only mode.
+	Hosts store.HostStore
+	Ports store.PortStore
+	Scans store.ScanStore
+	// Timeout is the per-dial budget. Defaults are applied for zero values.
+	Timeout time.Duration
+	// Workers is the GLOBAL probe concurrency cap (default 50). Set this for
+	// total parallelism, not per-subnet — an operator with 20 subnets used to
+	// get 20×Workers in-flight dials, which dwarfed the documented setting.
+	Workers int
+	// MaxHosts is the maximum per-subnet address count (default 65535).
+	MaxHosts int
+	// ProbePorts is the TCP liveness port list. Empty → defaultProbePorts.
+	ProbePorts []int
+	// DeepProbe / DeepProbePorts: see config.ScannerConfig docs.
+	DeepProbe      bool
+	DeepProbePorts []int
+	// UDPPorts: see config.ScannerConfig docs. Empty disables UDP probing.
+	UDPPorts []int
+	// EnrichARP populates MAC + Vendor from /proc/net/arp on Linux.
+	EnrichARP bool
+}
 
 // Scanner probes subnets and records live hosts.
 type Scanner struct {
-	hosts      store.HostStore
-	ports      store.PortStore
-	scans      store.ScanStore
-	timeout    time.Duration
-	maxHosts   int
-	probePorts []int
+	hosts          store.HostStore
+	ports          store.PortStore
+	scans          store.ScanStore
+	timeout        time.Duration
+	maxHosts       int
+	probePorts     []int
+	deepProbe      bool
+	deepProbePorts []int
+	udpPorts       []int
+	enrichARP      bool
 
 	// sem caps total concurrent probes across all subnets in a cycle. It is
 	// allocated once at construction so an operator with 20 subnets is not
@@ -37,37 +79,34 @@ type Scanner struct {
 	sem chan struct{}
 }
 
-// New creates a Scanner backed by the supplied stores.
-// workers controls the GLOBAL number of concurrent probes across all subnets
-// (default 50). maxHosts limits the number of usable addresses per subnet
-// scan (default 65535). probePorts may be nil; if so, the default port list
-// is used. ports may be nil; if so, open ports discovered during liveness
-// probing are not persisted (liveness-only mode).
-func New(
-	hosts store.HostStore,
-	ports store.PortStore,
-	scans store.ScanStore,
-	timeout time.Duration,
-	workers, maxHosts int,
-	probePorts []int,
-) *Scanner {
-	if workers <= 0 {
-		workers = 50
+// New creates a Scanner from the supplied Options. Zero/nil fields fall back
+// to sensible defaults.
+func New(opts Options) *Scanner {
+	if opts.Workers <= 0 {
+		opts.Workers = 50
 	}
-	if maxHosts <= 0 {
-		maxHosts = 65535
+	if opts.MaxHosts <= 0 {
+		opts.MaxHosts = 65535
 	}
-	if len(probePorts) == 0 {
-		probePorts = defaultProbePorts
+	if len(opts.ProbePorts) == 0 {
+		opts.ProbePorts = defaultProbePorts
+	}
+	deepPorts := opts.DeepProbePorts
+	if opts.DeepProbe && len(deepPorts) == 0 {
+		deepPorts = defaultDeepProbePorts
 	}
 	return &Scanner{
-		hosts:      hosts,
-		ports:      ports,
-		scans:      scans,
-		timeout:    timeout,
-		maxHosts:   maxHosts,
-		probePorts: probePorts,
-		sem:        make(chan struct{}, workers),
+		hosts:          opts.Hosts,
+		ports:          opts.Ports,
+		scans:          opts.Scans,
+		timeout:        opts.Timeout,
+		maxHosts:       opts.MaxHosts,
+		probePorts:     opts.ProbePorts,
+		deepProbe:      opts.DeepProbe,
+		deepProbePorts: deepPorts,
+		udpPorts:       opts.UDPPorts,
+		enrichARP:      opts.EnrichARP,
+		sem:            make(chan struct{}, opts.Workers),
 	}
 }
 
@@ -120,8 +159,10 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 			defer func() { <-s.sem; wg.Done() }()
 			openPort, ok := s.probe(ctx, addr)
 			if !ok {
+				metrics.ProbeFailureTotal.Inc()
 				return
 			}
+			metrics.ProbeSuccessTotal.Inc()
 			host := &models.Host{
 				IPAddress: addr,
 				Hostname:  reverseDNS(ctx, addr),
@@ -131,22 +172,27 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 			if fp := fingerprint(ctx, addr, openPort, s.timeout); fp != "" {
 				host.OSFingerprint = fp
 			}
+			if s.enrichARP {
+				if mac, vendor := lookupARP(addr); mac != "" {
+					host.MACAddress = mac
+					host.Vendor = vendor
+				}
+			}
 			hostID, err := s.hosts.Upsert(ctx, host)
 			if err != nil {
+				metrics.DBErrorsTotal.Inc()
 				slog.Warn("upsert host failed", "ip", addr, "err", err)
 				return
 			}
+			metrics.HostsUpsertedTotal.Inc()
 			if s.ports != nil {
-				if err := s.ports.Upsert(ctx, &models.Port{
-					HostID:    hostID,
-					Number:    openPort,
-					Protocol:  models.TCP,
-					State:     models.StateOpen,
-					FirstSeen: startedAt,
-					LastSeen:  startedAt,
-				}); err != nil {
-					slog.Warn("upsert port failed", "ip", addr, "port", openPort, "err", err)
-				}
+				s.upsertPort(ctx, hostID, addr, openPort, models.TCP, models.StateOpen, startedAt)
+			}
+			if s.deepProbe && s.ports != nil {
+				s.deepScan(ctx, hostID, addr, openPort, startedAt)
+			}
+			if len(s.udpPorts) > 0 && s.ports != nil {
+				s.udpScan(ctx, hostID, addr, startedAt)
 			}
 			mu.Lock()
 			count++
@@ -202,6 +248,116 @@ func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
 		return 0, false
 	}
 	return firstOpen, true
+}
+
+// upsertPort writes one row to the ports store and increments the metrics.
+// Pulled out of the hot loop to keep the per-host goroutine readable now
+// that we have three port-producing stages (liveness, deep TCP, UDP).
+func (s *Scanner) upsertPort(ctx context.Context, hostID int64, ip string, port int, proto models.Protocol, state models.PortState, ts time.Time) {
+	if err := s.ports.Upsert(ctx, &models.Port{
+		HostID:    hostID,
+		Number:    port,
+		Protocol:  proto,
+		State:     state,
+		FirstSeen: ts,
+		LastSeen:  ts,
+	}); err != nil {
+		metrics.DBErrorsTotal.Inc()
+		slog.Warn("upsert port failed", "ip", ip, "port", port, "proto", proto, "err", err)
+		return
+	}
+	metrics.PortsUpsertedTotal.Inc()
+}
+
+// deepScan dials each port in s.deepProbePorts (skipping the one already
+// confirmed by the liveness probe) and persists every successful dial. The
+// fan-out shares the global sem so deep probing does not blow past the
+// configured Workers budget. Closed/filtered ports are intentionally NOT
+// recorded — the ports table is a positive log of what's open, not an
+// inverse-index of what isn't.
+func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOpen int, ts time.Time) {
+	d := net.Dialer{Timeout: s.timeout}
+	var wg sync.WaitGroup
+	for _, port := range s.deepProbePorts {
+		if port == knownOpen {
+			continue
+		}
+		select {
+		case s.sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		wg.Add(1)
+		go func(port int) {
+			defer func() { <-s.sem; wg.Done() }()
+			conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+			if err != nil {
+				return
+			}
+			conn.Close()
+			s.upsertPort(ctx, hostID, ip, port, models.TCP, models.StateOpen, ts)
+		}(port)
+	}
+	wg.Wait()
+}
+
+// udpScan tries each UDP port in s.udpPorts. Best-effort semantics:
+//   - any bytes read back → Open
+//   - connection-refused (Linux surfaces ICMP port-unreachable this way) → Closed
+//   - anything else (no reply within timeout) → not recorded, since the
+//     ambiguous case would otherwise dominate the ports table.
+func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.Time) {
+	var wg sync.WaitGroup
+	for _, port := range s.udpPorts {
+		select {
+		case s.sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		wg.Add(1)
+		go func(port int) {
+			defer func() { <-s.sem; wg.Done() }()
+			state, ok := probeUDP(ctx, ip, port, s.timeout)
+			if !ok {
+				return
+			}
+			if state == models.StateOpen {
+				metrics.UDPProbeSuccessTotal.Inc()
+			}
+			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, ts)
+		}(port)
+	}
+	wg.Wait()
+}
+
+// probeUDP returns (state, true) when the port's state is determinable, and
+// (_, false) when the probe is ambiguous (no reply, no ICMP).
+func probeUDP(ctx context.Context, ip string, port int, timeout time.Duration) (models.PortState, bool) {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "udp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		// A connect-time error on UDP is unusual but treat it as filtered.
+		return "", false
+	}
+	defer conn.Close()
+	// Send a single zero byte. Many services respond to anything (DNS
+	// returns FORMERR, NTP rejects); for the rest we still learn the
+	// closed-vs-filtered distinction from the read error.
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
+	if _, err := conn.Write([]byte{0}); err != nil {
+		return "", false
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	buf := make([]byte, 32)
+	n, err := conn.Read(buf)
+	if err == nil && n > 0 {
+		return models.StateOpen, true
+	}
+	// ECONNREFUSED → kernel saw an ICMP port-unreachable, port is closed.
+	if err != nil && strings.Contains(err.Error(), "refused") {
+		return models.StateClosed, true
+	}
+	return "", false
 }
 
 // reverseDNS does a best-effort PTR lookup with a tight timeout. Returns an

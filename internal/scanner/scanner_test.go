@@ -179,7 +179,13 @@ func (m *mockPortStore) DeleteByHost(_ context.Context, hostID int64) error {
 
 // newScanner returns a Scanner with a short dial timeout and modest limits.
 func newScanner(hosts *mockHostStore, scans *mockScanStore) *scanner.Scanner {
-	return scanner.New(hosts, nil, scans, 10*time.Millisecond, 10, 65535, nil)
+	return scanner.New(scanner.Options{
+		Hosts:    hosts,
+		Scans:    scans,
+		Timeout:  10 * time.Millisecond,
+		Workers:  10,
+		MaxHosts: 65535,
+	})
 }
 
 // --- tests ---
@@ -193,7 +199,13 @@ func TestScanner_Scan_InvalidCIDR(t *testing.T) {
 
 func TestScanner_Scan_MaxHostsGuard(t *testing.T) {
 	// Limit to 5 hosts; /24 has 254 usable addresses — should be rejected immediately.
-	s := scanner.New(newMockHostStore(), nil, newMockScanStore(), 10*time.Millisecond, 4, 5, nil)
+	s := scanner.New(scanner.Options{
+		Hosts:    newMockHostStore(),
+		Scans:    newMockScanStore(),
+		Timeout:  10 * time.Millisecond,
+		Workers:  4,
+		MaxHosts: 5,
+	})
 	_, err := s.Scan(t.Context(), "192.168.1.0/24")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds limit")
@@ -253,7 +265,14 @@ func TestScanner_Scan_PersistsOpenPort(t *testing.T) {
 	hosts := newMockHostStore()
 	ports := newMockPortStore()
 	scans := newMockScanStore()
-	s := scanner.New(hosts, ports, scans, 500*time.Millisecond, 4, 65535, nil)
+	s := scanner.New(scanner.Options{
+		Hosts:    hosts,
+		Ports:    ports,
+		Scans:    scans,
+		Timeout:  500 * time.Millisecond,
+		Workers:  4,
+		MaxHosts: 65535,
+	})
 
 	n, err := s.Scan(t.Context(), "127.0.0.1/32")
 	require.NoError(t, err)
@@ -274,10 +293,81 @@ func TestScanner_Scan_PersistsOpenPort(t *testing.T) {
 	assert.Equal(t, host.ID, stored[0].HostID)
 }
 
+func TestScanner_Scan_DeepProbePersistsExtraOpenPorts(t *testing.T) {
+	// Open two listeners: one acts as the liveness probe answer (8080), the
+	// other is reached only when DeepProbe scans the wider port list. We
+	// pick an unprivileged port from defaultDeepProbePorts that isn't in the
+	// default liveness set.
+	liveness, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("cannot bind tcp listener:", err)
+	}
+	defer liveness.Close()
+	deep, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("cannot bind second tcp listener:", err)
+	}
+	defer deep.Close()
+
+	go acceptLoop(liveness)
+	go acceptLoop(deep)
+
+	hosts := newMockHostStore()
+	ports := newMockPortStore()
+	scans := newMockScanStore()
+
+	livePort := liveness.Addr().(*net.TCPAddr).Port
+	deepPort := deep.Addr().(*net.TCPAddr).Port
+
+	s := scanner.New(scanner.Options{
+		Hosts:          hosts,
+		Ports:          ports,
+		Scans:          scans,
+		Timeout:        500 * time.Millisecond,
+		Workers:        4,
+		MaxHosts:       65535,
+		ProbePorts:     []int{livePort},
+		DeepProbe:      true,
+		DeepProbePorts: []int{livePort, deepPort}, // livePort skipped (already known open)
+	})
+
+	n, err := s.Scan(t.Context(), "127.0.0.1/32")
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	host, err := hosts.GetByIP(t.Context(), "127.0.0.1")
+	require.NoError(t, err)
+	stored, err := ports.ListByHost(t.Context(), host.ID)
+	require.NoError(t, err)
+
+	got := map[int]bool{}
+	for _, p := range stored {
+		got[p.Number] = true
+	}
+	assert.True(t, got[livePort], "liveness port must be persisted")
+	assert.True(t, got[deepPort], "deep-probe port must be persisted")
+}
+
+func acceptLoop(ln net.Listener) {
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		c.Close()
+	}
+}
+
 func TestScanner_Scan_DoesNotProbeNetworkOrBroadcast(t *testing.T) {
 	hosts := newMockHostStore()
 	// Scanner with 1-worker and tiny subnet; cancel right away so no real dials.
-	s := scanner.New(hosts, nil, newMockScanStore(), time.Nanosecond, 1, 65535, nil)
+	s := scanner.New(scanner.Options{
+		Hosts:    hosts,
+		Scans:    newMockScanStore(),
+		Timeout:  time.Nanosecond,
+		Workers:  1,
+		MaxHosts: 65535,
+	})
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
