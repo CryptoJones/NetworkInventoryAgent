@@ -231,7 +231,7 @@ func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
 				results <- result{}
 				return
 			}
-			conn.Close()
+			_ = conn.Close()
 			results <- result{port: port, ok: true}
 		}(port)
 	}
@@ -294,7 +294,7 @@ func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOp
 			if err != nil {
 				return
 			}
-			conn.Close()
+			_ = conn.Close()
 			s.upsertPort(ctx, hostID, ip, port, models.TCP, models.StateOpen, ts)
 		}(port)
 	}
@@ -339,7 +339,7 @@ func probeUDP(ctx context.Context, ip string, port int, timeout time.Duration) (
 		// A connect-time error on UDP is unusual but treat it as filtered.
 		return "", false
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	// Send a single zero byte. Many services respond to anything (DNS
 	// returns FORMERR, NTP rejects); for the rest we still learn the
 	// closed-vs-filtered distinction from the read error.
@@ -399,7 +399,7 @@ func sshBanner(ctx context.Context, ip string, port int, timeout time.Duration) 
 	if err != nil {
 		return ""
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	line, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
@@ -425,7 +425,7 @@ func httpServerHeader(ctx context.Context, ip string, port int, timeout time.Dur
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if s := resp.Header.Get("Server"); s != "" {
 		return "HTTP: " + s
 	}

@@ -81,7 +81,7 @@ func Run(opts Options) int {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Fprintf(os.Stdout, "%s %s\n", opts.Name, VersionString())
+		_, _ = fmt.Fprintf(os.Stdout, "%s %s\n", opts.Name, VersionString())
 		return 0
 	}
 

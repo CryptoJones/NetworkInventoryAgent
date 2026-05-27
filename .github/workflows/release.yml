@@ -17,6 +17,11 @@ permissions:
   id-token: write   # for cosign keyless OIDC signing
   packages: write
 
+# Pre-empt the September 2026 Node.js 20 → 24 transition. See
+# .github/workflows/ci.yml for the rationale.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   release:
     runs-on: ubuntu-latest

@@ -43,7 +43,7 @@ func (r *PortRepo) ListByHost(ctx context.Context, hostID int64) ([]*models.Port
 	if err != nil {
 		return nil, fmt.Errorf("list ports for host %d: %w", hostID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ports []*models.Port
 	for rows.Next() {
