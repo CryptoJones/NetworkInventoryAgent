@@ -193,7 +193,11 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 			var openUDP []int
 
 			if s.ports != nil {
-				s.upsertPort(ctx, hostID, addr, openPort, models.TCP, models.StateOpen, startedAt)
+				// Reuse the host-level fingerprint string when the
+				// liveness port matches — it's the same banner.
+				// Saves a redial.
+				livenessService := host.OSFingerprint
+				s.upsertPort(ctx, hostID, addr, openPort, models.TCP, models.StateOpen, livenessService, startedAt)
 			}
 			if s.deepProbe && s.ports != nil {
 				openTCP = append(openTCP, s.deepScan(ctx, hostID, addr, openPort, startedAt)...)
@@ -271,13 +275,14 @@ func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
 }
 
 // upsertPort writes one row to the ports store and increments the metrics.
-// Pulled out of the hot loop to keep the per-host goroutine readable now
-// that we have three port-producing stages (liveness, deep TCP, UDP).
-func (s *Scanner) upsertPort(ctx context.Context, hostID int64, ip string, port int, proto models.Protocol, state models.PortState, ts time.Time) {
+// service is the protocol-specific banner from fingerprint() — empty when
+// no probe applies or the probe failed; the schema allows it.
+func (s *Scanner) upsertPort(ctx context.Context, hostID int64, ip string, port int, proto models.Protocol, state models.PortState, service string, ts time.Time) {
 	if err := s.ports.Upsert(ctx, &models.Port{
 		HostID:    hostID,
 		Number:    port,
 		Protocol:  proto,
+		Service:   service,
 		State:     state,
 		FirstSeen: ts,
 		LastSeen:  ts,
@@ -320,7 +325,13 @@ func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOp
 				return
 			}
 			_ = conn.Close()
-			s.upsertPort(ctx, hostID, ip, port, models.TCP, models.StateOpen, ts)
+			// Probe again for the protocol-specific banner. Open
+			// dial confirmed liveness, but most protocols expect
+			// the server (or client) to speak first — easier to
+			// just redial inside fingerprint() than juggle a half-
+			// initialised socket here.
+			service := fingerprint(ctx, ip, port, s.timeout)
+			s.upsertPort(ctx, hostID, ip, port, models.TCP, models.StateOpen, service, ts)
 			mu.Lock()
 			out = append(out, port)
 			mu.Unlock()
@@ -359,7 +370,10 @@ func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.
 			if !ok {
 				return
 			}
-			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, ts)
+			// UDP banner-grabs are protocol-specific (DNS query
+			// for 53, SNMP get for 161, …). Out of scope here;
+			// Service stays empty for UDP for now.
+			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, "", ts)
 			if state == models.StateOpen {
 				metrics.UDPProbeSuccessTotal.Inc()
 				mu.Lock()
@@ -415,21 +429,39 @@ func reverseDNS(ctx context.Context, ip string) string {
 	return strings.TrimSuffix(names[0], ".")
 }
 
-// fingerprint is a best-effort banner grab for the port that answered the
-// liveness probe. For SSH (22) we read the first line of the protocol
-// greeting; for HTTP (80, 8080) we send a minimal HEAD request and capture
-// the Server header. Anything else, or any error, returns "" so the field
-// stays absent rather than misleadingly populated.
+// fingerprint dispatches to a port-specific banner-grab helper. Returns ""
+// for unknown ports, dial failures, protocol-decode errors, or any other
+// uncertainty — the inventory shows the field blank rather than mislabel.
+//
+// The result is used for two storage paths:
+//   - Host.OSFingerprint, for the liveness-winner port only (preserves
+//     pre-26.12 semantics; the classifier uses this string to refine
+//     Linux/Windows decisions).
+//   - Port.Service, for every port the scanner persists.
+//
+// One function, two storage targets — a banner for port 22 is both an OS
+// hint and a service identification, so duplicating logic to separate the
+// two concerns would just produce drift.
 func fingerprint(ctx context.Context, ip string, port int, timeout time.Duration) string {
 	switch port {
 	case 22:
 		return sshBanner(ctx, ip, port, timeout)
-	case 80, 8080:
+	case 21:
+		return lineBanner(ctx, ip, port, timeout, "FTP")
+	case 23:
+		return lineBanner(ctx, ip, port, timeout, "Telnet")
+	case 25, 465, 587:
+		return lineBanner(ctx, ip, port, timeout, "SMTP")
+	case 110:
+		return lineBanner(ctx, ip, port, timeout, "POP3")
+	case 143:
+		return lineBanner(ctx, ip, port, timeout, "IMAP")
+	case 80, 8080, 8000, 8888:
 		return httpServerHeader(ctx, ip, port, timeout, "http")
-	case 443:
-		// TLS handshake would be needed for 443; skip rather than dial
-		// twice. A future deep-probe pass can do this properly.
-		return ""
+	case 443, 8443:
+		return tlsHTTPSFingerprint(ctx, ip, port, timeout)
+	case 3306:
+		return mysqlGreeting(ctx, ip, port, timeout)
 	default:
 		return ""
 	}
