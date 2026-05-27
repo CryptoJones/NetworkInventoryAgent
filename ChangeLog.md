@@ -17,6 +17,65 @@ _No unreleased changes._
 
 ---
 
+## 26.12 — 2026-05-27
+
+Service / application discovery (P2-01). Turns "port 22 is open" into
+"SSH-2.0-OpenSSH_9.6p1 Ubuntu", and similar for nine more protocols.
+Banners now flow into `Port.Service` for every persisted port, in addition
+to the existing `Host.OSFingerprint` for the liveness winner.
+
+### Added
+
+- **`internal/scanner/banner.go`** — three new banner-grab strategies:
+  - `lineBanner` for protocols where the server greets first (SMTP
+    25/465/587, FTP 21, POP3 110, IMAP 143, Telnet 23). Bounded
+    `capReader` defends against peers that flood without an EOL.
+  - `tlsHTTPSFingerprint` for HTTPS (443/8443). Completes a TLS
+    handshake (InsecureSkipVerify — we're scraping for ID, not
+    trusting), peeks at the peer cert CN/SAN, then reuses the same
+    connection for a HEAD to capture the Server header. Two IDs for
+    the cost of one dial.
+  - `mysqlGreeting` for MySQL/MariaDB/Percona (3306). Reads the v10
+    handshake packet and extracts the server-version string. Passive
+    — we never write to the socket.
+- **HTTP port list expanded** to include 8000 and 8888 (common
+  developer-server defaults).
+- **`Port.Service` populated by the scanner** for every TCP port
+  upserted by the liveness, deep-probe, and HTTPS-fingerprint paths.
+  The column has existed in the schema since the initial migration
+  but was never written until now.
+- **`internal/scanner/banner_test.go`** — full coverage of every
+  banner: SMTP greeting parse, FTP greeting parse, silent-server
+  timeout (must return ""), valid v10 MySQL handshake parse, wrong
+  protover MySQL guard, HTTPS handshake with cert CN extraction +
+  Server header pickup via a `httptest.NewUnstartedServer`.
+
+### Changed
+
+- **`scanner.upsertPort` gained a `service string` parameter.** The
+  three existing call sites (liveness, deepScan, udpScan) pass the
+  result of `fingerprint()` for TCP and `""` for UDP. UDP banner
+  probes are protocol-specific and out of scope for this sprint.
+- **`fingerprint()` dispatch table grew** from 4 entries to 12 — see
+  the function comment for the full list.
+
+### Notes
+
+- The liveness path no longer redials for its banner: `host.OSFingerprint`
+  was already populated by `fingerprint()` before the port upsert, so
+  the same string is reused as the liveness-port `Service`.
+- The deepScan path *does* redial inside `fingerprint()` per open
+  port. The first dial in `deepScan` was a connect-and-close to
+  confirm liveness; protocols where the server speaks first need a
+  fresh socket so the read deadline starts cleanly. The cost is one
+  extra dial per deep-open port per cycle — well within the global
+  worker semaphore.
+- UDP services (DNS 53, SNMP 161, NTP 123, …) are not banner-grabbed
+  yet. Each requires a protocol-specific request packet rather than a
+  passive listen; deferred to a future sprint if asked.
+
+---
+
 ## 26.11 — 2026-05-27
 
 Device-type classifier (P2-03 from the operator-feedback queue). Populates
