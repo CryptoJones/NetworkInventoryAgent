@@ -19,6 +19,7 @@ import (
 
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/store"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/tracing"
 )
 
 //go:embed templates
@@ -87,7 +88,7 @@ func NewServer(
 
 	s.srv = &http.Server{
 		Addr:              addr,
-		Handler:           s.middleware(mux),
+		Handler:           tracing.HTTPMiddleware("admin", s.middleware(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

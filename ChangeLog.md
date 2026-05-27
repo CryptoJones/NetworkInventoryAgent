@@ -17,6 +17,87 @@ _No unreleased changes._
 
 ---
 
+## 26.08 — 2026-05-27
+
+Final Planning.md sprint. Items #13 (peer TLS), #20 (OpenTelemetry tracing),
+and #41 (release engineering) — closing out the original 42-item backlog.
+
+### Added
+
+- **OpenTelemetry tracing** (Planning item #20). New `internal/tracing`
+  package wires a process-global TracerProvider with an OTLP/HTTP
+  exporter. Admin server, health server, and the watchdog's outbound
+  HTTP client all produce spans; trace context propagates between the
+  two paired agents. `tracing.endpoint` config field (or
+  `OTEL_EXPORTER_OTLP_ENDPOINT` env var) selects the collector. With
+  no endpoint the SDK runs no-op, so spans are produced but discarded
+  — turning real export on later is a one-line change.
+- **Peer TLS + optional mTLS** (Planning item #13). New
+  `watchdog.tls` (CA pinning + optional client keypair) and
+  `health.tls_cert_path` / `tls_key_path` / `client_ca_path` config
+  fields. TLS 1.2+ enforced. The watchdog and the health server share
+  the same `internal/tlsutil` helpers, so the two sides of the
+  handshake are configured by the same struct. Bearer tokens still
+  apply on top of TLS.
+- **goreleaser release pipeline + SBOM + cosign signing** (Planning
+  item #41). New `.goreleaser.yaml` cross-compiles linux/darwin/windows
+  × amd64/arm64; `.github/workflows/release.yml` triggers on `v*` tag
+  push. Every archive bundles a CycloneDX SBOM
+  (`sbom.cyclonedx.json`); every artefact is signed via cosign keyless
+  OIDC (GitHub Actions). README documents the `cosign verify-blob`
+  command. `make release-snapshot` validates the pipeline locally
+  without cutting a tag.
+
+### Changed
+
+- **`health.NewServer` now takes a `ServerOptions` struct.** The
+  positional signature is preserved as `health.NewServerLegacy` so
+  external callers don't break. New options fields: `TLSConfig`.
+- **`health.NewClientWith(addr, ClientOptions)`** is the new full-
+  control client constructor; existing `NewClient` / `NewAuthedClient`
+  remain as thin wrappers.
+- **`watchdog.New` now takes a pre-built `*health.Client`.** Client
+  construction (tracing transport, TLS pinning, bearer token, timeouts)
+  has moved into `cmd/internal/runtime` so the watchdog package has
+  no knowledge of TLS or otel.
+- **`config.WatchdogConfig.PeerToken` field is unchanged** but
+  `PeerToken` is no longer a `Config` field — it's been part of
+  WatchdogConfig since 26.06. The 26.06 ChangeLog mention is still
+  accurate.
+- **`internal/admin` and `internal/health`** wrap their muxes in
+  `tracing.HTTPMiddleware` so every request becomes a server span.
+
+### Tooling
+
+- **CycloneDX SBOM generation** via
+  `github.com/CycloneDX/cyclonedx-gomod` (run only at release time;
+  not a build-time dep).
+- **cosign keyless signing** in CI; transparency log entry uploaded
+  to Rekor automatically.
+- **`make release-snapshot`** for local pipeline validation.
+
+### Notes / breaking changes
+
+- `health.NewServer(addr, tracker, staleAfter, authToken)` →
+  `health.NewServer(addr, tracker, health.ServerOptions{StaleAfter: …, AuthToken: …, TLSConfig: …})`.
+  Use `NewServerLegacy` to keep the old signature.
+- `watchdog.New(cfg, localStatus, publish)` → `watchdog.New(cfg, client, localStatus, publish)`.
+  The `Config.PeerToken` field moved out; build the client with
+  `health.NewClientWith(addr, ClientOptions{Token: token, HTTPClient: tracing.HTTPClient(transport)})`.
+- New optional config fields: `tracing.endpoint`,
+  `watchdog.tls.{ca_cert_path,client_cert_path,client_key_path,server_name}`,
+  `health.{tls_cert_path,tls_key_path,client_ca_path}`. All default
+  empty (no behaviour change for existing deployments).
+
+### Planning.md status
+
+**All 42 recommendations are now addressed.** Items #1–#42 are either
+implemented, satisfied by an earlier change (e.g. #26 by 26.02), or
+documented as a deliberate non-goal. Future work should be tracked via
+new Planning.md entries or GitHub issues.
+
+---
+
 ## 26.07 — 2026-05-27
 
 Observability + remaining enrichment + dual-remote parity — items #16, #19,

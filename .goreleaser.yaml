@@ -1,0 +1,134 @@
+# goreleaser configuration for NetworkInventoryAgent.
+#
+# Build matrix: linux/darwin/windows × amd64/arm64. All three binaries
+# (agent, wintermute, neuromancer) ship in every archive so an operator can
+# pick which one to run after downloading. CGO is disabled — modernc.org/sqlite
+# is pure Go, so the resulting binaries are statically linked and portable.
+#
+# Triggered from .github/workflows/release.yml on a `v*` tag push. The same
+# config doubles as a local `goreleaser release --snapshot --clean` for
+# verifying the release-engineering pipeline without cutting an actual tag.
+
+version: 2
+
+project_name: networkinventoryagent
+
+before:
+  hooks:
+    - go mod tidy
+    # Generate a CycloneDX SBOM next to the archives; the archives.files glob
+    # below picks it up so every download includes one (NIST SP 800-218 SSDF).
+    - sh -c 'go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest mod -licenses -json -output dist/sbom.cyclonedx.json'
+
+builds:
+  - id: agent
+    main: ./cmd/agent
+    binary: agent
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/Ronin48/NetworkInventoryAgent/cmd/internal/runtime.Version={{.Version}}
+  - id: wintermute
+    main: ./cmd/wintermute
+    binary: wintermute
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/Ronin48/NetworkInventoryAgent/cmd/internal/runtime.Version={{.Version}}
+  - id: neuromancer
+    main: ./cmd/neuromancer
+    binary: neuromancer
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/Ronin48/NetworkInventoryAgent/cmd/internal/runtime.Version={{.Version}}
+  - id: console
+    main: ./cmd/console
+    binary: console
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/Ronin48/NetworkInventoryAgent/cmd/internal/runtime.Version={{.Version}}
+
+archives:
+  - name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - SECURITY.md
+      - CONTRIBUTING.md
+      - ChangeLog.md
+      - Planning.md
+      - configs/*.json
+      - src: dist/sbom.cyclonedx.json
+        dst: sbom.cyclonedx.json
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+# cosign keyless OIDC signing. Requires GitHub Actions OIDC tokens, so this
+# only works from the .github/workflows/release.yml job — never from a
+# laptop. The transparency log entry is uploaded to Rekor by default.
+signs:
+  - cmd: cosign
+    artifacts: all
+    output: true
+    args:
+      - sign-blob
+      - --yes
+      - --oidc-issuer=https://token.actions.githubusercontent.com
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - ${artifact}
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-dev'
+
+changelog:
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^chore:'
+      - '^test:'
+
+release:
+  github:
+    owner: CryptoJones
+    name: NetworkInventoryAgent
+  draft: false
+  prerelease: auto
+  header: |
+    ## NetworkInventoryAgent {{ .Version }}
+
+    Built from `{{ .ShortCommit }}`. Binaries are signed with [cosign](https://github.com/sigstore/cosign)
+    using GitHub Actions OIDC; verify with:
+
+    ```bash
+    cosign verify-blob \
+      --certificate-identity-regexp 'https://github.com/CryptoJones/NetworkInventoryAgent/' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate <artifact>.pem \
+      --signature   <artifact>.sig \
+      <artifact>
+    ```
+
+    Each archive includes a CycloneDX SBOM (`sbom.cyclonedx.json`) listing every
+    module the build pulled in.

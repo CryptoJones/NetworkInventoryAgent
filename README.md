@@ -30,6 +30,24 @@ No C toolchain is required. The SQLite driver (`modernc.org/sqlite`) is pure Go.
 
 ## Installation
 
+### Pre-built binaries (signed)
+
+Tagged releases at <https://github.com/CryptoJones/NetworkInventoryAgent/releases>
+ship binaries for linux/darwin/windows × amd64/arm64. Every archive contains
+a CycloneDX SBOM and every artefact is signed with `cosign` keyless OIDC
+(via GitHub Actions). Verify before running:
+
+```bash
+cosign verify-blob \
+  --certificate-identity-regexp 'https://github.com/CryptoJones/NetworkInventoryAgent/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate networkinventoryagent_<ver>_linux_amd64.tar.gz.pem \
+  --signature   networkinventoryagent_<ver>_linux_amd64.tar.gz.sig \
+                networkinventoryagent_<ver>_linux_amd64.tar.gz
+```
+
+### Build from source
+
 ```bash
 git clone https://codeberg.org/Ronin48/NetworkInventoryAgent.git
 cd NetworkInventoryAgent

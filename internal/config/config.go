@@ -48,6 +48,17 @@ type Config struct {
 	Health   HealthConfig   `json:"health"`
 	Admin    AdminConfig    `json:"admin"`
 	Watchdog WatchdogConfig `json:"watchdog"`
+	Tracing  TracingConfig  `json:"tracing,omitempty"`
+}
+
+// TracingConfig controls the OpenTelemetry exporter. When Endpoint is empty
+// the agent still installs the tracer provider so spans are produced
+// internally but they go to a no-op exporter — the cost of turning real
+// export on later is therefore zero. The OTEL_EXPORTER_OTLP_ENDPOINT env
+// var, when set, overrides this value (so containerised deployments don't
+// need a config edit).
+type TracingConfig struct {
+	Endpoint string `json:"endpoint,omitempty"`
 }
 
 type DatabaseConfig struct {
@@ -116,6 +127,17 @@ type HealthConfig struct {
 	// watchdog.peer_token. Leave empty (and the file chmod 600) for the
 	// loopback-only default deployment.
 	AuthToken string `json:"auth_token,omitempty"`
+	// TLSCertPath / TLSKeyPath, when both set, switch the listener to
+	// HTTPS. The cert chain at TLSCertPath is presented; the private key
+	// at TLSKeyPath must match. Without these the server listens plain
+	// HTTP (the existing behaviour).
+	TLSCertPath string `json:"tls_cert_path,omitempty"`
+	TLSKeyPath  string `json:"tls_key_path,omitempty"`
+	// ClientCAPath, when set, requires every incoming connection to
+	// present a client certificate signed by the CA in ClientCAPath
+	// (mTLS). Spoofed peers can no longer return a healthy /status under
+	// this configuration. Bearer tokens stack on top.
+	ClientCAPath string `json:"client_ca_path,omitempty"`
 }
 
 type AdminConfig struct {
@@ -127,7 +149,7 @@ type AdminConfig struct {
 
 type WatchdogConfig struct {
 	// PeerAddr is the base URL of the peer agent's health server
-	// (e.g. "http://localhost:8081").
+	// (e.g. "http://localhost:8081" or "https://neuromancer.local:8443").
 	PeerAddr string `json:"peer_addr"`
 	// PeerToken is the bearer token sent on every probe of PeerAddr. Must
 	// match the peer's health.auth_token. Empty when peer is on loopback.
@@ -139,6 +161,32 @@ type WatchdogConfig struct {
 	// MaxFailures is the number of consecutive failed health checks before the
 	// peer is declared down.
 	MaxFailures int `json:"max_failures"`
+	// TLS is the optional mTLS configuration for HTTPS peers. Required when
+	// peer_addr is https://; ignored otherwise.
+	TLS TLSConfig `json:"tls,omitempty"`
+}
+
+// TLSConfig pins a peer (or the local server) to a specific CA and,
+// optionally, requires an mTLS client certificate. Used by both the
+// watchdog's outbound client and the health server's inbound listener,
+// so the same struct documents both sides of the handshake.
+type TLSConfig struct {
+	// CACertPath is the path to a PEM-encoded CA bundle that signs the
+	// peer's server certificate. Empty falls back to the system roots,
+	// which is rarely what you want for an internal mesh — set this to a
+	// project-specific CA so a compromised public CA can't impersonate
+	// peers.
+	CACertPath string `json:"ca_cert_path,omitempty"`
+	// ClientCertPath / ClientKeyPath enable mTLS — the watchdog presents
+	// this certificate to the peer, and the health server requires a
+	// client cert signed by ClientCAPath (server side). Empty disables
+	// mTLS; bearer tokens remain the only auth.
+	ClientCertPath string `json:"client_cert_path,omitempty"`
+	ClientKeyPath  string `json:"client_key_path,omitempty"`
+	// ServerName, when set, overrides the SNI / certificate-verification
+	// hostname. Useful when the peer is addressed by IP but the cert is
+	// issued for a name.
+	ServerName string `json:"server_name,omitempty"`
 }
 
 // Default returns a Config populated with safe defaults.

@@ -1,0 +1,50 @@
+# Release pipeline. Triggers on `v*` tag push; cuts a GitHub Release with
+# cross-platform binaries (linux/darwin/windows × amd64/arm64), a CycloneDX
+# SBOM per archive, and cosign keyless signatures for every artefact.
+#
+# To cut a release:
+#   git tag vYY.NN
+#   git push --tags github
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # for the GitHub Release upload
+  id-token: write   # for cosign keyless OIDC signing
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # goreleaser changelog wants full history
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.0'
+
+      - name: Install syft (alternative SBOM, kept for parity)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Disable cosign's TTY prompt; the action runs unattended.
+          COSIGN_YES: 'true'

@@ -3,7 +3,9 @@ package health
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Ronin48/NetworkInventoryAgent/internal/metrics"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/tracing"
 )
 
 // Server is a minimal HTTP server that exposes three endpoints:
@@ -22,22 +25,44 @@ import (
 //
 // When authToken is non-empty all endpoints require
 // `Authorization: Bearer <token>`; mismatches return 401 in constant time.
+// When TLSConfig is non-nil the listener accepts only HTTPS; mTLS is enabled
+// if TLSConfig.ClientCAs is set.
 type Server struct {
 	addr       string
 	tracker    *Tracker
 	staleAfter time.Duration
 	authToken  string
+	tlsConfig  *tls.Config
 	srv        *http.Server
 }
 
-// NewServer constructs a health server. staleAfter is the maximum age of the
-// most recent scan before /health flips to 503; pass 0 to disable the
-// freshness check (e.g. for tests). A typical value is 3×ScanInterval.
-//
-// authToken, when non-empty, gates both endpoints behind a bearer header so
-// off-loopback binds don't leak host counts to the network (OWASP A01/A05).
-func NewServer(addr string, tracker *Tracker, staleAfter time.Duration, authToken string) *Server {
-	s := &Server{addr: addr, tracker: tracker, staleAfter: staleAfter, authToken: authToken}
+// ServerOptions configures NewServer. All fields are optional; the zero
+// value produces a loopback-friendly plain-HTTP server with no auth and no
+// freshness check (matching test defaults).
+type ServerOptions struct {
+	// StaleAfter is the maximum age of the most recent scan before /health
+	// flips to 503. Zero disables the freshness check.
+	StaleAfter time.Duration
+	// AuthToken gates every endpoint behind `Authorization: Bearer <token>`.
+	AuthToken string
+	// TLSConfig switches the listener to HTTPS. mTLS is enabled if
+	// TLSConfig.ClientCAs is non-nil (the listener requires a client
+	// certificate signed by one of those CAs).
+	TLSConfig *tls.Config
+}
+
+// NewServer constructs a health server with the supplied options.
+// The legacy positional signature (addr, tracker, staleAfter, authToken)
+// is preserved as NewServerLegacy for tests and external callers; new code
+// should use NewServer.
+func NewServer(addr string, tracker *Tracker, opts ServerOptions) *Server {
+	s := &Server{
+		addr:       addr,
+		tracker:    tracker,
+		staleAfter: opts.StaleAfter,
+		authToken:  opts.AuthToken,
+		tlsConfig:  opts.TLSConfig,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.requireAuth(s.handleHealth))
@@ -46,13 +71,24 @@ func NewServer(addr string, tracker *Tracker, staleAfter time.Duration, authToke
 
 	s.srv = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           tracing.HTTPMiddleware("health", mux),
+		TLSConfig:         opts.TLSConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		WriteTimeout:      5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
 	return s
+}
+
+// NewServerLegacy preserves the pre-26.08 positional signature so existing
+// callers (tests, third-party) compile unchanged. New code should call
+// NewServer with a ServerOptions struct.
+func NewServerLegacy(addr string, tracker *Tracker, staleAfter time.Duration, authToken string) *Server {
+	return NewServer(addr, tracker, ServerOptions{
+		StaleAfter: staleAfter,
+		AuthToken:  authToken,
+	})
 }
 
 // requireAuth wraps a handler with the bearer-token check. It is a no-op when
@@ -90,7 +126,10 @@ func (s *Server) Addr() string {
 }
 
 // Start listens and serves in a background goroutine. It returns once the
-// listener is accepting connections so callers can safely proceed.
+// listener is accepting connections so callers can safely proceed. When the
+// server was constructed with a TLSConfig the listener serves HTTPS via
+// ServeTLS; the certificates are taken from TLSConfig.Certificates so no
+// file paths are required at Start time.
 func (s *Server) Start() error {
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
@@ -98,7 +137,13 @@ func (s *Server) Start() error {
 	}
 	s.srv.Addr = ln.Addr().String()
 	go func() {
-		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		var err error
+		if s.tlsConfig != nil {
+			err = s.srv.ServeTLS(ln, "", "")
+		} else {
+			err = s.srv.Serve(ln)
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("health server error", "err", err)
 		}
 	}()

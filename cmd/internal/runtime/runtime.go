@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -26,6 +27,8 @@ import (
 	"github.com/Ronin48/NetworkInventoryAgent/internal/logging"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/metrics"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/sqlite"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/tlsutil"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/tracing"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/watchdog"
 )
 
@@ -88,6 +91,14 @@ func Run(opts Options) int {
 	}
 	logging.Setup(cfg.Log, opts.Name)
 
+	traceShutdown, err := tracing.Setup(context.Background(), opts.Name, cfg.Tracing.Endpoint)
+	if err != nil {
+		// A bad OTLP endpoint shouldn't keep the agent off the network — log
+		// and fall through to a no-op tracer rather than failing boot.
+		slog.Warn("tracing setup failed; running without span export", "err", err)
+		traceShutdown = func(context.Context) error { return nil }
+	}
+
 	db, err := sqlite.Open(context.Background(), cfg.Database.Path)
 	if err != nil {
 		slog.Error("failed to open database", "path", cfg.Database.Path, "err", err)
@@ -101,16 +112,23 @@ func Run(opts Options) int {
 
 	tracker := health.NewTracker(opts.Name)
 
-	healthSrv := health.NewServer(
-		cfg.Health.Addr, tracker,
-		3*cfg.Scanner.ScanInterval.Duration,
-		cfg.Health.AuthToken,
+	healthTLS, err := tlsutil.ServerConfig(
+		cfg.Health.TLSCertPath, cfg.Health.TLSKeyPath, cfg.Health.ClientCAPath,
 	)
+	if err != nil {
+		slog.Error("failed to load health TLS config", "err", err)
+		return 1
+	}
+	healthSrv := health.NewServer(cfg.Health.Addr, tracker, health.ServerOptions{
+		StaleAfter: 3 * cfg.Scanner.ScanInterval.Duration,
+		AuthToken:  cfg.Health.AuthToken,
+		TLSConfig:  healthTLS,
+	})
 	if err := healthSrv.Start(); err != nil {
 		slog.Error("failed to start health server", "addr", cfg.Health.Addr, "err", err)
 		return 1
 	}
-	slog.Info("health server started", "addr", healthSrv.Addr())
+	slog.Info("health server started", "addr", healthSrv.Addr(), "tls", healthTLS != nil)
 
 	a := agent.New(opts.Name, cfg.Scanner, db.Hosts(), db.Ports(), db.Scans(), tracker)
 
@@ -137,15 +155,19 @@ func Run(opts Options) int {
 	metrics.PeerUp.Set(-1)
 
 	if opts.WithWatchdog && cfg.Watchdog.PeerAddr != "" {
+		peerClient, err := buildPeerClient(cfg.Watchdog)
+		if err != nil {
+			slog.Error("failed to build peer client", "err", err)
+			return 1
+		}
 		wd := watchdog.New(watchdog.Config{
 			Name:            opts.Name,
 			PeerAddr:        cfg.Watchdog.PeerAddr,
-			PeerToken:       cfg.Watchdog.PeerToken,
 			Interval:        cfg.Watchdog.Interval.Duration,
 			ScanInterval:    cfg.Scanner.ScanInterval.Duration,
 			MaxHostDriftPct: cfg.Watchdog.MaxHostDriftPct,
 			MaxFailures:     cfg.Watchdog.MaxFailures,
-		}, tracker.Get, tracker.SetPeer)
+		}, peerClient, tracker.Get, tracker.SetPeer)
 		go wd.Run(ctx)
 	}
 
@@ -159,6 +181,42 @@ func Run(opts Options) int {
 	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("admin server shutdown error", "err", err)
 	}
+	if err := traceShutdown(shutdownCtx); err != nil {
+		slog.Warn("tracer shutdown error", "err", err)
+	}
 	slog.Info("agent stopped", "name", opts.Name)
 	return 0
+}
+
+// buildPeerClient assembles the watchdog's health.Client with a
+// tracing-instrumented transport. TLS is layered onto the transport before
+// otelhttp wraps it, so spans cover the full handshake-through-read path.
+func buildPeerClient(wd config.WatchdogConfig) (*health.Client, error) {
+	transport, err := buildPeerTransport(wd.TLS)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := tracing.HTTPClient(transport)
+	httpClient.Timeout = 5 * time.Second
+	return health.NewClientWith(wd.PeerAddr, health.ClientOptions{
+		Token:      wd.PeerToken,
+		HTTPClient: httpClient,
+	}), nil
+}
+
+// buildPeerTransport returns an http.RoundTripper for the watchdog's HTTP
+// client. When TLS is unconfigured (the common loopback case) it returns
+// http.DefaultTransport untouched; otherwise it clones the default transport
+// and replaces TLSClientConfig with the project-pinned one.
+func buildPeerTransport(tlsCfg config.TLSConfig) (http.RoundTripper, error) {
+	t, err := tlsutil.ClientConfig(tlsCfg)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil {
+		return http.DefaultTransport, nil
+	}
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.TLSClientConfig = t
+	return base, nil
 }

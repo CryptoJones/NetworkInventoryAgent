@@ -1,4 +1,4 @@
-.PHONY: build test lint golangci fmt vet vuln clean docker-build docker-up docker-down docker-logs
+.PHONY: build test lint golangci fmt vet vuln clean docker-build docker-up docker-down docker-logs release-snapshot
 
 build:
 	go build ./...
@@ -37,3 +37,9 @@ docker-down:
 
 docker-logs:
 	docker compose logs -f
+
+# `make release-snapshot` runs goreleaser without cutting a tag — useful
+# for validating the .goreleaser.yaml after edits. Drops everything in ./dist.
+release-snapshot:
+	@command -v goreleaser >/dev/null || { echo "goreleaser not installed — install from https://goreleaser.com/install/"; exit 1; }
+	goreleaser release --snapshot --clean --skip=sign

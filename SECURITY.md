@@ -44,7 +44,7 @@ The following table documents the project's posture against the [OWASP Top 10 (2
 | # | Category | Status | Notes |
 |---|----------|--------|-------|
 | A01 | Broken Access Control | ⚠️ Partial | `/health` and `/status` are intentionally unauthenticated for simplicity. The default bind address is `127.0.0.1` (loopback only). Operators who expose these endpoints on a wider interface accept responsibility for network-level access control. |
-| A02 | Cryptographic Failures | ⚠️ Partial | Peer-to-peer watchdog traffic is plain HTTP. TLS between agents is planned. Database is stored unencrypted; operators should apply filesystem-level encryption where needed. |
+| A02 | Cryptographic Failures | ✅ Pass | Peer-to-peer watchdog traffic supports TLS (with optional mTLS) — set `watchdog.tls.ca_cert_path` and `health.tls_cert_path`/`tls_key_path` in the configs. TLS 1.2+ enforced. Database is stored unencrypted; operators should apply filesystem-level encryption where needed. |
 | A03 | Injection | ✅ Pass | All SQL queries use parameterized `?` placeholders. No shell commands are invoked; the scanner uses `net.Dialer` directly. |
 | A04 | Insecure Design | ✅ Pass | Health server binds to loopback by default. `peer_addr` is validated to `http`/`https` schemes only, preventing SSRF via alternate URI schemes. No user-controlled input reaches internal APIs without validation. |
 | A05 | Security Misconfiguration | ✅ Pass | Default `health.addr` is `127.0.0.1:8080` (loopback only). HTTP server has explicit read, write, and idle timeouts. Response bodies from peers are capped at 1 MiB. |
@@ -64,7 +64,7 @@ NetworkInventoryAgent is designed to run on a trusted internal network. Before d
 
 **Health endpoints are unauthenticated.** The `/health` and `/status` endpoints expose agent name, scan counts, host counts, and timestamps to anyone who can reach the listening address. The default bind address is `127.0.0.1` (loopback only). Do not change this to `0.0.0.0` unless the network segment is trusted or access is controlled at the firewall.
 
-**Peer communication is plain HTTP.** Watchdog checks between Wintermute and Neuromancer travel over HTTP. An attacker with access to the network path between the two agents could intercept or spoof status responses. Run the agents on the same host, or on a dedicated management VLAN, until TLS support is added.
+**Peer communication can use TLS.** Watchdog checks between Wintermute and Neuromancer default to plain HTTP for the loopback case. For off-loopback deployments, switch `watchdog.peer_addr` to `https://…`, set `watchdog.tls.ca_cert_path` to the CA that signs the peer's cert, and set `health.tls_cert_path` / `health.tls_key_path` on the peer. For full mutual auth, set `health.client_ca_path` on both sides and `watchdog.tls.client_cert_path` / `client_key_path` on the dialer side. Bearer tokens stack on top of TLS.
 
 **The agent performs active TCP scanning.** Running the agent on networks you do not own or have explicit written permission to scan may violate laws and terms of service. The operator is solely responsible for ensuring scans are authorised.
 

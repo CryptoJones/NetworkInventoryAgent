@@ -14,7 +14,7 @@ import (
 // staleAfter is left at 0 so the freshness check doesn't fire during tests.
 func startServer(t *testing.T, tracker *health.Tracker) (baseURL string) {
 	t.Helper()
-	srv := health.NewServer(":0", tracker, 0, "")
+	srv := health.NewServerLegacy(":0", tracker, 0, "")
 	require.NoError(t, srv.Start())
 	t.Cleanup(func() { srv.Shutdown(context.Background()) }) //nolint:errcheck
 
