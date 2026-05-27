@@ -91,9 +91,16 @@ checksum:
 # cosign keyless OIDC signing. Requires GitHub Actions OIDC tokens, so this
 # only works from the .github/workflows/release.yml job — never from a
 # laptop. The transparency log entry is uploaded to Rekor by default.
+#
+# Both ${signature} and ${certificate} must be declared at this level for
+# goreleaser to expand them in the args list; without `certificate:`
+# declared, cosign would write to an empty filename and the README's
+# verify-blob command would have no .pem to consume.
 signs:
   - cmd: cosign
     artifacts: all
+    signature: '${artifact}.sig'
+    certificate: '${artifact}.pem'
     output: true
     args:
       - sign-blob
