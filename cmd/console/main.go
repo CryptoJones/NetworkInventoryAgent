@@ -18,12 +18,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Ronin48/NetworkInventoryAgent/cmd/console/tui"
+	"github.com/Ronin48/NetworkInventoryAgent/cmd/internal/runtime"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/sqlite"
 )
 
 func main() {
 	dbPath := flag.String("db", "inventory.db", "path to SQLite database file")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Fprintf(os.Stdout, "console %s\n", runtime.VersionString())
+		return
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

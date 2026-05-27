@@ -38,10 +38,11 @@ import (
 // of truth for both -version and any future User-Agent / metric exposition.
 var Version = ""
 
-// versionString returns a printable version. Falls back to the VCS revision
+// VersionString returns a printable version. Falls back to the VCS revision
 // embedded by `go build` when Version is empty, which covers the
-// non-goreleaser local-build case.
-func versionString() string {
+// non-goreleaser local-build case. Exported so cmd/console (which doesn't
+// go through Run) can produce the same -version output.
+func VersionString() string {
 	if Version != "" {
 		return Version
 	}
@@ -80,7 +81,7 @@ func Run(opts Options) int {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Fprintf(os.Stdout, "%s %s\n", opts.Name, versionString())
+		fmt.Fprintf(os.Stdout, "%s %s\n", opts.Name, VersionString())
 		return 0
 	}
 
