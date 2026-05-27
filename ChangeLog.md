@@ -17,6 +17,29 @@ _No unreleased changes._
 
 ---
 
+## 26.16 — 2026-05-27
+
+Listener-address environment variable overrides. Containerised
+deployments can now repoint the health + admin listeners without
+rewriting the JSON config file.
+
+### Added
+
+- **`INVENTORY_HEALTH_ADDR`** — overrides `health.addr`.
+- **`INVENTORY_ADMIN_ADDR`** — overrides `admin.addr`.
+
+Existing config validation still applies: an off-loopback bind
+without a corresponding `INVENTORY_AUTH_TOKEN` is refused at boot,
+regardless of which surface (file or env) supplied the address.
+
+### Fixed
+
+- **README env-var table now lists `INVENTORY_AUTH_TOKEN` and
+  `INVENTORY_PEER_TOKEN`**, which the code has supported since 26.06
+  but the docs never advertised.
+
+---
+
 ## 26.15 — 2026-05-27
 
 Per-subnet scan profiles (P2-05). Operators can now run aggressive
