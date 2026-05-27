@@ -10,6 +10,7 @@ import (
 
 	"github.com/Ronin48/NetworkInventoryAgent/internal/config"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/metrics"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/scanner"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/store"
 )
@@ -43,11 +44,19 @@ func New(
 		name:  name,
 		cfg:   cfg,
 		hosts: hosts,
-		scanner: scanner.New(
-			hosts, ports, scans,
-			cfg.Timeout.Duration, cfg.Workers, cfg.MaxHosts,
-			cfg.ProbePorts,
-		),
+		scanner: scanner.New(scanner.Options{
+			Hosts:          hosts,
+			Ports:          ports,
+			Scans:          scans,
+			Timeout:        cfg.Timeout.Duration,
+			Workers:        cfg.Workers,
+			MaxHosts:       cfg.MaxHosts,
+			ProbePorts:     cfg.ProbePorts,
+			DeepProbe:      cfg.DeepProbe,
+			DeepProbePorts: cfg.DeepProbePorts,
+			UDPPorts:       cfg.UDPPorts,
+			EnrichARP:      cfg.EnrichARP,
+		}),
 		tracker: tracker,
 		now:     time.Now,
 		trigger: make(chan struct{}, 1),
@@ -61,6 +70,7 @@ func New(
 func (a *Agent) Trigger() bool {
 	select {
 	case a.trigger <- struct{}{}:
+		metrics.ScanTriggersTotal.Inc()
 		return true
 	default:
 		return false
@@ -98,8 +108,10 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	cycleHosts := 0
 	cycleHealthy := true
 	for _, subnet := range a.cfg.Subnets {
+		metrics.ScansTotal.Inc()
 		n, err := a.scanner.Scan(ctx, subnet)
 		if err != nil {
+			metrics.ScanErrorsTotal.Inc()
 			log.Warn("subnet scan failed", "subnet", subnet, "err", err)
 			cycleHealthy = false
 			continue
@@ -109,6 +121,7 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	}
 
 	if pruned := a.pruneStale(ctx, log, started); pruned > 0 {
+		metrics.HostsPrunedTotal.Add(int64(pruned))
 		log.Info("pruned stale hosts", "count", pruned)
 	}
 
@@ -116,10 +129,12 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	// inventory, not just hosts found in this cycle.
 	total, err := a.hosts.Count(ctx)
 	if err != nil {
+		metrics.DBErrorsTotal.Inc()
 		log.Warn("failed to count total hosts", "err", err)
 		total = cycleHosts
 		cycleHealthy = false
 	}
+	metrics.HostCount.Set(int64(total))
 	a.tracker.SetHostCount(total)
 	a.tracker.RecordScan()
 	a.tracker.SetHealthy(cycleHealthy)

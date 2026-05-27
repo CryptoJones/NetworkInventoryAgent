@@ -1,0 +1,4 @@
+# Default owner — any path not otherwise matched routes to @CryptoJones.
+# Codeberg is the authoritative remote; this file is mirrored on GitHub so
+# contributors landing there get reviews routed automatically too.
+* @CryptoJones

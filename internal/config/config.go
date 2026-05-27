@@ -76,6 +76,28 @@ type ScannerConfig struct {
 	// stale. Zero disables pruning. Pruning runs at the end of each scan
 	// cycle and DELETEs rows where last_seen < now - HostTTL*ScanInterval.
 	HostTTL Duration `json:"host_ttl,omitempty"`
+	// DeepProbe enables a second-pass scan of DeepProbePorts on every host
+	// confirmed alive by the liveness probe. Disabled by default — operators
+	// must opt in because the worst case wall-clock budget per host grows
+	// from one Timeout (parallel liveness) to roughly two Timeouts
+	// (liveness + the longest deep dial).
+	DeepProbe bool `json:"deep_probe,omitempty"`
+	// DeepProbePorts is the TCP port list dialled by the deep-probe pass.
+	// Empty falls back to a small "top services" list when DeepProbe is on
+	// (see scanner.defaultDeepProbePorts).
+	DeepProbePorts []int `json:"deep_probe_ports,omitempty"`
+	// UDPPorts is the UDP port list to probe per live host. Best-effort:
+	// open is recorded only when a response arrives, closed when the kernel
+	// surfaces an ICMP port-unreachable error. The ambiguous "no reply"
+	// case is not persisted to avoid filling the ports table with noise.
+	// Disabled when empty (the default).
+	UDPPorts []int `json:"udp_ports,omitempty"`
+	// EnrichARP populates Host.MACAddress and Host.Vendor from /proc/net/arp
+	// for hosts on a directly-attached subnet. Linux only; on other
+	// platforms the lookup is a silent no-op. Default false to preserve
+	// previous behaviour (and because the lookup requires the host to
+	// already be in the kernel's neighbour cache).
+	EnrichARP bool `json:"enrich_arp,omitempty"`
 }
 
 type LogConfig struct {

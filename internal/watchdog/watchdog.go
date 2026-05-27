@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
+	"github.com/Ronin48/NetworkInventoryAgent/internal/metrics"
 )
 
 // Config holds the parameters for a Watchdog instance.
@@ -88,19 +89,29 @@ func (w *Watchdog) Run(ctx context.Context) {
 }
 
 func (w *Watchdog) check(ctx context.Context, log *slog.Logger) {
+	metrics.WatchdogChecksTotal.Inc()
 	ps := health.PeerStatus{
 		Addr:          w.cfg.PeerAddr,
 		LastCheckedAt: time.Now().UTC(),
 	}
 	defer func() {
 		ps.ConsecutiveFailures = w.failures
+		if ps.Reachable {
+			metrics.PeerUp.Set(1)
+		} else {
+			metrics.PeerUp.Set(0)
+		}
 		w.publish(ps)
 	}()
 
 	// 1. Liveness
 	if err := w.client.Ping(ctx); err != nil {
 		w.failures++
+		metrics.WatchdogFailuresTotal.Inc()
 		ps.LastError = err.Error()
+		if w.failures == w.cfg.MaxFailures {
+			metrics.WatchdogPeerDownTotal.Inc()
+		}
 		if w.failures >= w.cfg.MaxFailures {
 			log.Error("peer is DOWN",
 				"consecutive_failures", w.failures,

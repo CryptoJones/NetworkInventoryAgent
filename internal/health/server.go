@@ -9,15 +9,18 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Ronin48/NetworkInventoryAgent/internal/metrics"
 )
 
-// Server is a minimal HTTP server that exposes two endpoints:
+// Server is a minimal HTTP server that exposes three endpoints:
 //
-//	GET /health  — 200 OK if the agent is healthy AND has scanned recently,
-//	               503 otherwise
-//	GET /status  — JSON-encoded Status
+//	GET /health   — 200 OK if the agent is healthy AND has scanned recently,
+//	                503 otherwise
+//	GET /status   — JSON-encoded Status
+//	GET /metrics  — Prometheus text exposition format (also gated by authToken)
 //
-// When authToken is non-empty both endpoints require
+// When authToken is non-empty all endpoints require
 // `Authorization: Bearer <token>`; mismatches return 401 in constant time.
 type Server struct {
 	addr       string
@@ -39,6 +42,7 @@ func NewServer(addr string, tracker *Tracker, staleAfter time.Duration, authToke
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.requireAuth(s.handleHealth))
 	mux.HandleFunc("GET /status", s.requireAuth(s.handleStatus))
+	mux.Handle("GET /metrics", s.requireAuthHandler(metrics.Default.Handler()))
 
 	s.srv = &http.Server{
 		Addr:              addr,
@@ -55,9 +59,15 @@ func NewServer(addr string, tracker *Tracker, staleAfter time.Duration, authToke
 // the server was constructed without an authToken so the loopback default
 // stays curl-friendly.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return s.requireAuthHandler(next).ServeHTTP
+}
+
+// requireAuthHandler is the http.Handler-typed variant so we can wrap the
+// metrics handler (which is constructed as a Handler, not a HandlerFunc).
+func (s *Server) requireAuthHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.authToken == "" {
-			next(w, r)
+			next.ServeHTTP(w, r)
 			return
 		}
 		auth := r.Header.Get("Authorization")
@@ -69,8 +79,8 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next(w, r)
-	}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Addr returns the address the server is actually listening on. Call this
