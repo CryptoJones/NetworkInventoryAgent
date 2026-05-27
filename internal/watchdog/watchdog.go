@@ -26,11 +26,9 @@ import (
 type Config struct {
 	// Name is the name of THIS agent (used in log fields).
 	Name string
-	// PeerAddr is the base URL of the peer's health server.
+	// PeerAddr is the base URL of the peer's health server. Used for log
+	// fields only — the actual HTTP calls go through the injected Client.
 	PeerAddr string
-	// PeerToken is the bearer token sent on every probe. Empty when the
-	// peer is on loopback and does not require auth.
-	PeerToken string
 	// Interval is how often to run the sanity checks.
 	Interval time.Duration
 	// ScanInterval is the expected gap between the peer's scans.
@@ -53,17 +51,20 @@ type Watchdog struct {
 	failures    int
 }
 
-// New creates a Watchdog. localStatus is a callback that returns this agent's
-// current Status so the watchdog can compare inventories. publish, if non-nil,
-// is called after every tick with the watchdog's latest view of the peer —
-// the standard wiring is tracker.SetPeer.
-func New(cfg Config, localStatus func() health.Status, publish func(health.PeerStatus)) *Watchdog {
+// New creates a Watchdog with a caller-supplied health.Client. Centralising
+// client construction in runtime.go lets the same wiring carry both the
+// tracing-instrumented transport and the TLS config without leaking those
+// concerns into this package. localStatus returns this agent's status for
+// drift checks; publish (optional) is called after every tick with the
+// watchdog's latest view of the peer — the standard wiring is
+// tracker.SetPeer.
+func New(cfg Config, client *health.Client, localStatus func() health.Status, publish func(health.PeerStatus)) *Watchdog {
 	if publish == nil {
 		publish = func(health.PeerStatus) {}
 	}
 	return &Watchdog{
 		cfg:         cfg,
-		client:      health.NewAuthedClient(cfg.PeerAddr, cfg.PeerToken),
+		client:      client,
 		localStatus: localStatus,
 		publish:     publish,
 	}

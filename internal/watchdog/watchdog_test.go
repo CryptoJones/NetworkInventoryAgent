@@ -13,7 +13,7 @@ import (
 
 func startPeer(t *testing.T, tracker *health.Tracker) string {
 	t.Helper()
-	srv := health.NewServer(":0", tracker, 0, "")
+	srv := health.NewServerLegacy(":0", tracker, 0, "")
 	require.NoError(t, srv.Start())
 	t.Cleanup(func() { srv.Shutdown(context.Background()) }) //nolint:errcheck
 
@@ -36,7 +36,7 @@ func newWatchdog(peerURL string, local *health.Tracker, scanInterval time.Durati
 		ScanInterval:    scanInterval,
 		MaxHostDriftPct: driftPct,
 		MaxFailures:     2,
-	}, localStatus(local), nil)
+	}, health.NewClient(peerURL), localStatus(local), nil)
 }
 
 func runFor(t *testing.T, wd *watchdog.Watchdog, d time.Duration) {
@@ -79,7 +79,7 @@ func TestWatchdog_PeerDown(t *testing.T) {
 		ScanInterval:    5 * time.Minute,
 		MaxHostDriftPct: 50.0,
 		MaxFailures:     2,
-	}, local.Get, nil)
+	}, health.NewClient("http://"+addr), local.Get, nil)
 	runFor(t, wd, 150*time.Millisecond)
 }
 

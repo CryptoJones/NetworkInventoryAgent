@@ -20,21 +20,40 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// NewClient builds an unauthenticated client (token is the empty string).
-// Use NewAuthedClient for off-loopback peers.
-func NewClient(baseURL string) *Client {
-	return NewAuthedClient(baseURL, "")
+// ClientOptions configures Client construction. Both fields are optional —
+// zero values produce the simple unauthenticated loopback client.
+type ClientOptions struct {
+	// Token is the bearer token sent on every request. Empty disables auth.
+	Token string
+	// HTTPClient overrides the default 5 s plain HTTP client. Production
+	// callers pass a tracing-instrumented and/or TLS-configured client.
+	HTTPClient *http.Client
 }
 
-// NewAuthedClient builds a client that sends `Authorization: Bearer <token>`
-// on every request. Pass "" to disable auth (loopback peer).
+// NewClient builds an unauthenticated client (the simplest case).
+// Use NewClientWith for off-loopback peers and/or custom transport.
+func NewClient(baseURL string) *Client {
+	return NewClientWith(baseURL, ClientOptions{})
+}
+
+// NewAuthedClient builds a client that sends `Authorization: Bearer <token>`.
+// Equivalent to NewClientWith(baseURL, ClientOptions{Token: token}); preserved
+// for call sites that don't need a custom transport.
 func NewAuthedClient(baseURL, token string) *Client {
+	return NewClientWith(baseURL, ClientOptions{Token: token})
+}
+
+// NewClientWith is the full-control constructor. Use it when you need a
+// custom transport for tracing, TLS pinning, or both.
+func NewClientWith(baseURL string, opts ClientOptions) *Client {
+	httpClient := opts.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 5 * time.Second}
+	}
 	return &Client{
-		baseURL: baseURL,
-		token:   token,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		baseURL:    baseURL,
+		token:      opts.Token,
+		httpClient: httpClient,
 	}
 }
 
