@@ -1,6 +1,7 @@
 # Release pipeline. Triggers on `v*` tag push; cuts a GitHub Release with
 # cross-platform binaries (linux/darwin/windows × amd64/arm64), a CycloneDX
-# SBOM per archive, and cosign keyless signatures for every artefact.
+# SBOM per archive, multi-arch Docker images on ghcr.io, and cosign
+# keyless signatures for every artefact (binaries AND container manifests).
 #
 # To cut a release:
 #   git tag vYY.NN
@@ -42,6 +43,22 @@ jobs:
 
       - name: Install syft for SBOM generation
         uses: anchore/sbom-action/download-syft@v0
+
+      # QEMU lets the amd64 runner build linux/arm64 image layers.
+      # Buildx is the modern build frontend that goreleaser's
+      # `dockers:` block invokes via `docker buildx build`.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run goreleaser
         uses: goreleaser/goreleaser-action@v6

@@ -88,6 +88,77 @@ checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
 
+# Per-arch Docker images published to GitHub Container Registry. Each
+# build target consumes the matching goreleaser-produced binaries (no
+# in-image rebuild), then docker_manifests stitches the per-arch tags
+# into a single multi-arch :version tag operators can pull without
+# knowing what their host arch is.
+#
+# `use: buildx` is required for the --platform flag; release.yml sets
+# up QEMU before goreleaser runs so cross-arch builds succeed on the
+# amd64 GitHub runner.
+dockers:
+  - image_templates:
+      - 'ghcr.io/cryptojones/networkinventoryagent:{{ .Version }}-amd64'
+      - 'ghcr.io/cryptojones/networkinventoryagent:latest-amd64'
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    goarch: amd64
+    extra_files:
+      - README.md
+      - LICENSE
+      - SECURITY.md
+      - ChangeLog.md
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.title=NetworkInventoryAgent
+      - --label=org.opencontainers.image.description=Two-agent network inventory with mutual watchdog
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.source=https://github.com/CryptoJones/NetworkInventoryAgent
+      - --label=org.opencontainers.image.licenses=Apache-2.0
+  - image_templates:
+      - 'ghcr.io/cryptojones/networkinventoryagent:{{ .Version }}-arm64'
+      - 'ghcr.io/cryptojones/networkinventoryagent:latest-arm64'
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    goarch: arm64
+    extra_files:
+      - README.md
+      - LICENSE
+      - SECURITY.md
+      - ChangeLog.md
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.title=NetworkInventoryAgent
+      - --label=org.opencontainers.image.description=Two-agent network inventory with mutual watchdog
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.source=https://github.com/CryptoJones/NetworkInventoryAgent
+      - --label=org.opencontainers.image.licenses=Apache-2.0
+
+docker_manifests:
+  - name_template: 'ghcr.io/cryptojones/networkinventoryagent:{{ .Version }}'
+    image_templates:
+      - 'ghcr.io/cryptojones/networkinventoryagent:{{ .Version }}-amd64'
+      - 'ghcr.io/cryptojones/networkinventoryagent:{{ .Version }}-arm64'
+  - name_template: 'ghcr.io/cryptojones/networkinventoryagent:latest'
+    image_templates:
+      - 'ghcr.io/cryptojones/networkinventoryagent:latest-amd64'
+      - 'ghcr.io/cryptojones/networkinventoryagent:latest-arm64'
+
+# cosign keyless OIDC signing for the published manifests. Uses the same
+# Fulcio + Rekor flow as the binary signing in the `signs:` section.
+docker_signs:
+  - cmd: cosign
+    artifacts: manifests
+    output: true
+    args:
+      - sign
+      - --yes
+      - --oidc-issuer=https://token.actions.githubusercontent.com
+      - ${artifact}
+
 # cosign keyless OIDC signing. Requires GitHub Actions OIDC tokens, so this
 # only works from the .github/workflows/release.yml job — never from a
 # laptop. The transparency log entry is uploaded to Rekor by default.

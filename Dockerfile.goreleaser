@@ -1,0 +1,41 @@
+# Dockerfile.goreleaser — slim image consumed by `goreleaser release`.
+#
+# The main Dockerfile builds the binaries inside the image (multi-stage,
+# good for `docker build .`). goreleaser already cross-compiles every
+# binary at the host level, so this variant just COPYs the resulting
+# artefacts in and avoids the duplicated Go toolchain pass per arch.
+#
+# Pinned by sha256 so rebuilds are reproducible and Renovate has a
+# concrete handle to bump (renovate.json automerges digest updates).
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+
+RUN addgroup -S inventory && adduser -S -G inventory inventory
+
+# goreleaser places each per-binary build under its own dist subdir and
+# passes the directory contents as the docker build context, so the
+# binaries are at the top of the build context here — no per-arch dance.
+COPY agent       /usr/local/bin/agent
+COPY wintermute  /usr/local/bin/wintermute
+COPY neuromancer /usr/local/bin/neuromancer
+COPY console     /usr/local/bin/console
+
+# Bundled docs / configs so `docker run --rm <image> cat /etc/inventory/...`
+# gives operators reference material without a separate volume mount.
+COPY README.md       /usr/share/doc/inventory/README.md
+COPY LICENSE         /usr/share/doc/inventory/LICENSE
+COPY SECURITY.md     /usr/share/doc/inventory/SECURITY.md
+COPY ChangeLog.md    /usr/share/doc/inventory/ChangeLog.md
+
+RUN mkdir -p /data && chown inventory:inventory /data
+VOLUME ["/data"]
+
+USER inventory
+
+# Default ports — health 8080, admin 9090. Override at run time with
+# -e or by mounting a config file under /data and pointing -config at it.
+EXPOSE 8080 9090
+
+# The `agent` entrypoint is the standalone single-agent binary. To run
+# Wintermute/Neuromancer instead:
+#   docker run --rm <image> --entrypoint /usr/local/bin/wintermute ...
+ENTRYPOINT ["/usr/local/bin/agent"]
