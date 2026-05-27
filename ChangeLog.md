@@ -17,6 +17,53 @@ _No unreleased changes._
 
 ---
 
+## 26.11 — 2026-05-27
+
+Device-type classifier (P2-03 from the operator-feedback queue). Populates
+`Host.DeviceType` automatically based on the OUI vendor, OS-fingerprint
+banner, and the open TCP + UDP ports found during the scan. The admin
+console templates already had the field plumbed; this sprint just gives
+them data to show.
+
+### Added
+
+- **`internal/scanner/classify.go`** — pure heuristic function with
+  rules for printers (9100/631/515), routers (MikroTik + vendor-pinned
+  Cisco), hypervisors (VMware + 902/5988/5989), databases (MySQL,
+  Postgres, MSSQL, MongoDB, Redis, Memcached), Windows hosts/servers
+  (SMB ± HTTP), Active Directory domain controllers (Kerberos+LDAP),
+  mail servers (SMTP+IMAP combo), DNS servers, MQTT brokers, embedded
+  systems (Raspberry Pi OUI), Linux hosts (SSH banner), and generic
+  web appliances. Conservative: returns "" rather than guessing when
+  no rule fires confidently.
+- **`internal/scanner/classify_test.go`** — 27 table-driven cases
+  covering every rule above, including overlapping cases (DC beats
+  generic SMB, SMB+webserver beats SMB alone).
+- **`scanner.Scan` integration test** — confirms a host listening on
+  11211 (memcached) gets `DeviceType = "database (memcached)"` after a
+  real scan, exercising the full classify → re-upsert path.
+
+### Changed
+
+- **`scanner.deepScan` and `scanner.udpScan`** now return the list of
+  open ports they found (in addition to upserting them) so the per-
+  host goroutine can pass the complete port set to `classify()`. No
+  behavioural change for callers that ignore the return value.
+- **Per-host scan path** does a second `hosts.Upsert` when the
+  classifier produces a non-empty device-type. The cost is one extra
+  small SQL write per live host per cycle.
+
+### Fixed
+
+- **`mockHostStore.Upsert` now mirrors the sqlite UPSERT** — it
+  previously returned the existing row unchanged on conflict, which
+  meant the scanner's "first upsert without device_type, then
+  re-upsert with device_type" path tested green against the mock but
+  would have lost the device_type write against any real store. Mock
+  parity caught the bug before it shipped.
+
+---
+
 ## 26.10 — 2026-05-27
 
 Container distribution. Adds multi-arch Docker images on the GitHub

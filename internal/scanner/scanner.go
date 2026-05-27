@@ -185,15 +185,35 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 				return
 			}
 			metrics.HostsUpsertedTotal.Inc()
+
+			// Track every open port across the three scan stages so
+			// the classifier sees the full picture, not just the
+			// liveness winner.
+			openTCP := []int{openPort}
+			var openUDP []int
+
 			if s.ports != nil {
 				s.upsertPort(ctx, hostID, addr, openPort, models.TCP, models.StateOpen, startedAt)
 			}
 			if s.deepProbe && s.ports != nil {
-				s.deepScan(ctx, hostID, addr, openPort, startedAt)
+				openTCP = append(openTCP, s.deepScan(ctx, hostID, addr, openPort, startedAt)...)
 			}
 			if len(s.udpPorts) > 0 && s.ports != nil {
-				s.udpScan(ctx, hostID, addr, startedAt)
+				openUDP = s.udpScan(ctx, hostID, addr, startedAt)
 			}
+
+			// Classify now that every probe stage has reported. A
+			// non-empty result means we re-upsert the host with the
+			// new device_type — first Upsert above wrote it blank
+			// because deep/udp hadn't run yet.
+			if dt := classify(host.Vendor, host.OSFingerprint, openTCP, openUDP); dt != "" && dt != host.DeviceType {
+				host.DeviceType = dt
+				if _, err := s.hosts.Upsert(ctx, host); err != nil {
+					metrics.DBErrorsTotal.Inc()
+					slog.Warn("re-upsert host with device_type failed", "ip", addr, "err", err)
+				}
+			}
+
 			mu.Lock()
 			count++
 			mu.Unlock()
@@ -270,14 +290,19 @@ func (s *Scanner) upsertPort(ctx context.Context, hostID int64, ip string, port 
 }
 
 // deepScan dials each port in s.deepProbePorts (skipping the one already
-// confirmed by the liveness probe) and persists every successful dial. The
-// fan-out shares the global sem so deep probing does not blow past the
-// configured Workers budget. Closed/filtered ports are intentionally NOT
-// recorded — the ports table is a positive log of what's open, not an
-// inverse-index of what isn't.
-func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOpen int, ts time.Time) {
+// confirmed by the liveness probe), persists every successful dial, and
+// returns the list of newly-open ports so the classifier can see the full
+// picture. The fan-out shares the global sem so deep probing does not blow
+// past the configured Workers budget. Closed/filtered ports are
+// intentionally NOT recorded — the ports table is a positive log of what's
+// open, not an inverse-index of what isn't.
+func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOpen int, ts time.Time) []int {
 	d := net.Dialer{Timeout: s.timeout}
-	var wg sync.WaitGroup
+	var (
+		mu  sync.Mutex
+		out []int
+		wg  sync.WaitGroup
+	)
 	for _, port := range s.deepProbePorts {
 		if port == knownOpen {
 			continue
@@ -285,7 +310,7 @@ func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOp
 		select {
 		case s.sem <- struct{}{}:
 		case <-ctx.Done():
-			return
+			return out
 		}
 		wg.Add(1)
 		go func(port int) {
@@ -296,23 +321,36 @@ func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOp
 			}
 			_ = conn.Close()
 			s.upsertPort(ctx, hostID, ip, port, models.TCP, models.StateOpen, ts)
+			mu.Lock()
+			out = append(out, port)
+			mu.Unlock()
 		}(port)
 	}
 	wg.Wait()
+	return out
 }
 
-// udpScan tries each UDP port in s.udpPorts. Best-effort semantics:
+// udpScan tries each UDP port in s.udpPorts and returns the list of UDP
+// ports that came back open (state=Open only — Closed responses are
+// persisted but excluded from the return so the classifier reasons about
+// services, not negative observations).
+//
+// Best-effort semantics:
 //   - any bytes read back → Open
 //   - connection-refused (Linux surfaces ICMP port-unreachable this way) → Closed
 //   - anything else (no reply within timeout) → not recorded, since the
 //     ambiguous case would otherwise dominate the ports table.
-func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.Time) {
-	var wg sync.WaitGroup
+func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.Time) []int {
+	var (
+		mu  sync.Mutex
+		out []int
+		wg  sync.WaitGroup
+	)
 	for _, port := range s.udpPorts {
 		select {
 		case s.sem <- struct{}{}:
 		case <-ctx.Done():
-			return
+			return out
 		}
 		wg.Add(1)
 		go func(port int) {
@@ -321,13 +359,17 @@ func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.
 			if !ok {
 				return
 			}
+			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, ts)
 			if state == models.StateOpen {
 				metrics.UDPProbeSuccessTotal.Inc()
+				mu.Lock()
+				out = append(out, port)
+				mu.Unlock()
 			}
-			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, ts)
 		}(port)
 	}
 	wg.Wait()
+	return out
 }
 
 // probeUDP returns (state, true) when the port's state is determinable, and
