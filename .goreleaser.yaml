@@ -16,9 +16,6 @@ project_name: networkinventoryagent
 before:
   hooks:
     - go mod tidy
-    # Generate a CycloneDX SBOM next to the archives; the archives.files glob
-    # below picks it up so every download includes one (NIST SP 800-218 SSDF).
-    - sh -c 'go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest mod -licenses -json -output dist/sbom.cyclonedx.json'
 
 builds:
   - id: agent
@@ -76,8 +73,16 @@ archives:
       - ChangeLog.md
       - Planning.md
       - configs/*.json
-      - src: dist/sbom.cyclonedx.json
-        dst: sbom.cyclonedx.json
+
+# CycloneDX SBOM per archive — goreleaser invokes syft after building each
+# archive; syft introspects the embedded Go binary's BuildInfo and emits a
+# CycloneDX document. CI installs syft via anchore/sbom-action/download-syft.
+sboms:
+  - id: archive
+    artifacts: archive
+    cmd: syft
+    args: ['$artifact', '--output', 'cyclonedx-json=$document']
+    documents: ['${artifact}.cyclonedx.json']
 
 checksum:
   name_template: 'checksums.txt'
