@@ -17,6 +17,48 @@ _No unreleased changes._
 
 ---
 
+## 26.17 — 2026-05-27
+
+Documentation catch-up. No behaviour change — closes the gap between
+README and the ten sprints (26.07–26.16) of features that landed since.
+
+### Updated
+
+- **README config reference table** — was missing 23 fields shipped
+  between 26.06 and 26.16: `scanner.profiles[].*`, `scanner.probe_ports`,
+  `scanner.deep_probe`, `scanner.deep_probe_ports`, `scanner.udp_ports`,
+  `scanner.enrich_arp`, `scanner.host_ttl`, `health.auth_token`,
+  `health.tls_cert_path`, `health.tls_key_path`, `health.client_ca_path`,
+  `watchdog.peer_token`, `watchdog.tls.*` (4 fields), `tracing.endpoint`,
+  `alerts.webhook.*` (2 fields), `alerts.syslog.*` (3 fields). Table is
+  now grouped by subsystem for readability.
+- **README endpoints table** — was missing 7 of 9 HTTP routes the
+  agent serves. Now lists `/health`, `/status`, `/metrics` (health
+  server) and `/`, `/hosts`, `/hosts/{ip}`, `/scans`, `/watchdog`,
+  `/export.{json,csv}`, `/api/v1/hosts`, `/api/v1/hosts/{ip}`,
+  `POST /scan` (admin server) in two separate tables by listener.
+- **README package layout** — was missing the five packages added
+  since 26.07: `alerts/`, `metrics/`, `tracing/`, `tlsutil/`, plus
+  the `banner.go` / `classify.go` / `arp.go` modules under
+  `scanner/`.
+- **README Features bullet list** — was current as of ~26.06 — now
+  reflects banner-grab service identification, the device-type
+  classifier, MAC/vendor enrichment, per-subnet scan profiles,
+  change detection alerts, JSON query API, Prometheus metrics,
+  OpenTelemetry tracing, signed multi-platform releases.
+- **Per-subnet profile example** in the config section, showing
+  aggressive-infra + lazy-guest tuning in one config.
+
+### Notes
+
+- No code change. `go test ./...` green and `golangci-lint run ./...`
+  unchanged (still 0 issues).
+- This is the last "we shipped features but the docs lagged" sprint;
+  the canonical config and endpoint surface is now accurate against
+  the code.
+
+---
+
 ## 26.16 — 2026-05-27
 
 Listener-address environment variable overrides. Containerised
