@@ -138,7 +138,11 @@ func Run(opts Options) int {
 		slog.Info("alert sinks configured", "count", len(alertSinks))
 	}
 
-	a := agent.New(opts.Name, cfg.Scanner, db.Hosts(), db.Ports(), db.Scans(), tracker, mux)
+	a, err := agent.New(opts.Name, cfg.Scanner, db.Hosts(), db.Ports(), db.Scans(), tracker, mux)
+	if err != nil {
+		slog.Error("agent setup failed", "err", err)
+		return 1
+	}
 
 	adminSrv, err := admin.NewServer(
 		cfg.Admin.Addr, opts.Name,

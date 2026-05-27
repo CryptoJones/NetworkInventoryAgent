@@ -176,7 +176,7 @@ func (m *mockScanStore) List(_ context.Context) ([]*models.Scan, error) {
 // call to Trigger() succeeds, subsequent calls return false until the queued
 // trigger has been consumed.
 func TestAgent_TriggerCoalesces(t *testing.T) {
-	a := agent.New(
+	a, err := agent.New(
 		"test",
 		config.ScannerConfig{},
 		newMockHostStore(),
@@ -185,6 +185,7 @@ func TestAgent_TriggerCoalesces(t *testing.T) {
 		health.NewTracker("test"),
 		nil,
 	)
+	require.NoError(t, err)
 	assert.True(t, a.Trigger(), "first Trigger() must enqueue")
 	assert.False(t, a.Trigger(), "second Trigger() must coalesce, not enqueue")
 }
@@ -195,7 +196,7 @@ func TestAgent_CycleMarksHealthyOnCleanRun(t *testing.T) {
 	tracker := health.NewTracker("test")
 	tracker.SetHealthy(false) // start unhealthy so we can observe the flip
 
-	a := agent.New(
+	a, err := agent.New(
 		"test",
 		config.ScannerConfig{
 			Subnets:      nil,
@@ -207,6 +208,7 @@ func TestAgent_CycleMarksHealthyOnCleanRun(t *testing.T) {
 		tracker,
 		nil,
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()
@@ -224,7 +226,7 @@ func TestAgent_CycleMarksUnhealthyOnCountFailure(t *testing.T) {
 	hosts.countErr = errors.New("db gone")
 
 	tracker := health.NewTracker("test")
-	a := agent.New(
+	a, err := agent.New(
 		"test",
 		config.ScannerConfig{
 			Subnets:      nil,
@@ -236,6 +238,7 @@ func TestAgent_CycleMarksUnhealthyOnCountFailure(t *testing.T) {
 		tracker,
 		nil,
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()
@@ -260,7 +263,7 @@ func TestAgent_PrunesStaleHosts(t *testing.T) {
 	require.NoError(t, err)
 
 	tracker := health.NewTracker("test")
-	a := agent.New(
+	a, err := agent.New(
 		"test",
 		config.ScannerConfig{
 			Subnets:      nil,
@@ -273,6 +276,7 @@ func TestAgent_PrunesStaleHosts(t *testing.T) {
 		tracker,
 		nil,
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()
@@ -294,7 +298,7 @@ func TestAgent_PruneDisabledWithoutTTL(t *testing.T) {
 		LastSeen:  time.Now().Add(-24 * time.Hour),
 	})
 
-	a := agent.New(
+	a, err := agent.New(
 		"test",
 		config.ScannerConfig{
 			Subnets:      nil,
@@ -307,6 +311,7 @@ func TestAgent_PruneDisabledWithoutTTL(t *testing.T) {
 		health.NewTracker("test"),
 		nil,
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()
@@ -330,7 +335,7 @@ func TestAgent_EmitsHostVanishedOnPrune(t *testing.T) {
 	require.NoError(t, err)
 
 	rec := &recordingEmitter{}
-	a := agent.New(
+	a, err := agent.New(
 		"test",
 		config.ScannerConfig{
 			Subnets:      nil,
@@ -343,6 +348,7 @@ func TestAgent_EmitsHostVanishedOnPrune(t *testing.T) {
 		health.NewTracker("test"),
 		rec,
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()
@@ -373,7 +379,7 @@ func TestAgent_EmitsHostDiscoveredOnNewHost(t *testing.T) {
 	}
 
 	rec := &recordingEmitter{}
-	a := agent.New(
+	a, err := agent.New(
 		"test",
 		config.ScannerConfig{
 			Subnets:      nil,
@@ -385,6 +391,7 @@ func TestAgent_EmitsHostDiscoveredOnNewHost(t *testing.T) {
 		health.NewTracker("test"),
 		rec,
 	)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()

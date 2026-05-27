@@ -17,6 +17,111 @@ _No unreleased changes._
 
 ---
 
+## 26.15 — 2026-05-27
+
+Per-subnet scan profiles (P2-05). Operators can now run aggressive
+hourly deep scans on critical infrastructure while leaving the guest
+network on a lazy daily liveness sweep — all from one config file, one
+agent process. Closes the original P2 operator-feedback batch.
+
+### Added
+
+- **`config.SubnetProfile`** — per-subnet overrides for `ScanInterval`,
+  `Timeout`, `ProbePorts`, `DeepProbe`, `DeepProbePorts`, `UDPPorts`,
+  `EnrichARP`. Bool fields are `*bool` so a profile can explicitly
+  disable deep probing even when the global default is on (the zero
+  value would be ambiguous).
+- **`config.ScannerConfig.Profiles []SubnetProfile`** — the new
+  per-subnet list. Mutually exclusive with the legacy `Subnets`
+  field; both are validated at boot.
+- **`config.ResolvedProfile` + `ScannerConfig.Resolve()`** — flattens
+  Subnets + Profiles into one fully-defaulted list. Every field is
+  populated from either the profile override or the global default,
+  so the agent's runtime path has no further fallback logic.
+- **`scanner.SubnetOptions`** — new struct passed to `Scan(ctx,
+  subnet, opts)`. Carries the per-call probe configuration so the
+  scanner can serve multiple profiles without per-scan reconstruction.
+- **`config.True()` / `config.False()`** — bool-pointer helpers for
+  building profiles programmatically.
+
+### Changed
+
+- **`scanner.Scan(ctx, subnet)` → `scanner.Scan(ctx, subnet, SubnetOptions{})`**.
+  In-tree callers updated; out-of-tree callers pass `SubnetOptions{}`
+  to retain pre-26.15 behaviour.
+- **`scanner.probe`, `deepScan`, `udpScan` helpers** now take their
+  timeout + port-list parameters explicitly rather than reading from
+  the Scanner struct. The Scanner-level fields remain as defaults
+  consulted by `resolve()` at the top of Scan.
+- **`agent.New` now returns `(*Agent, error)`** — `Resolve()` runs at
+  construction so config errors (duplicate subnets, mutually-exclusive
+  flat list + profiles) surface at boot, not on the first scan tick.
+  Test suites updated.
+- **Agent scheduling**: the single global `ScanInterval` ticker is
+  replaced with one that ticks at the *shortest* per-profile
+  interval. Each profile keeps its own `nextDue` timestamp; only
+  profiles past their due time get scanned on each tick. The
+  housekeeping pass (prune, change-detect diff, tracker updates) runs
+  every tick regardless, so zero-profile deployments — watchdog-only
+  mode — still work as before.
+- **Tick-interval safety floor** of 1 second. Prevents pathological
+  busy-loops if an operator types `"1ns"` by accident.
+
+### Tests
+
+- 7 new tests in `internal/config` covering: legacy-Subnets path,
+  profile-overrides-win, explicit-False-beats-global-True, mutually-
+  exclusive validation, duplicate-subnet rejection, empty-subnet
+  rejection, zero-profile happy path.
+- Scanner + agent test suites updated for the new `SubnetOptions{}`
+  third argument and `(a, err)` constructor.
+
+### Migration notes
+
+Existing configs keep working — set `scanner.subnets` and the global
+fields (`scan_interval`, `timeout`, `probe_ports`, …) as before.
+**Operators who want per-subnet tuning** switch to:
+
+```json
+{
+  "scanner": {
+    "profiles": [
+      { "subnet": "10.0.0.0/24", "scan_interval": "1h", "deep_probe": true },
+      { "subnet": "192.168.1.0/24", "scan_interval": "24h" }
+    ],
+    "scan_interval": "5m",
+    "timeout": "2s",
+    "workers": 50
+  }
+}
+```
+
+Any field absent from a profile inherits the corresponding global.
+The flat `scanner.subnets` and per-subnet `scanner.profiles` fields
+are mutually exclusive — boot fails fast if both are set.
+
+---
+
+## P2 operator-feedback batch — complete
+
+Original asks from the operator pass: **all five shipped.**
+
+| # | Item | Sprint |
+|---|---|---|
+| 1 | Service / application discovery | 26.12 |
+| 2 | Change detection + webhook/syslog alerts | 26.13 |
+| 3 | Device-type classifier | 26.11 |
+| 4 | Query API beyond bulk export | 26.14 |
+| 5 | Per-subnet scan profiles | 26.15 |
+
+The agent now does end-to-end inventory: discovery → enrichment →
+classification → change detection → alerting → queryable API, with
+per-subnet scheduling. Next-feature backlog is empty; future work
+should be driven by a fresh round of operator feedback or `/ultrareview`
+findings.
+
+---
+
 ## 26.14 — 2026-05-27
 
 JSON query API (P2-04). Adds filterable, paginated `/api/v1/hosts` and
