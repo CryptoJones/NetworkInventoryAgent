@@ -96,7 +96,17 @@ type DatabaseConfig struct {
 }
 
 type ScannerConfig struct {
-	Subnets      []string `json:"subnets"`
+	// Subnets is the legacy flat list — every entry uses the global
+	// defaults below. Mutually exclusive with Profiles; setting both
+	// is a config error.
+	Subnets []string `json:"subnets,omitempty"`
+	// Profiles is the per-subnet override list. Any field a profile
+	// leaves empty falls back to the corresponding global default
+	// (ScanInterval, Timeout, ProbePorts, …). Operators tune critical
+	// infrastructure with an aggressive profile while leaving the
+	// guest network on the lazy default.
+	Profiles []SubnetProfile `json:"profiles,omitempty"`
+
 	ScanInterval Duration `json:"scan_interval"`
 	Timeout      Duration `json:"timeout"`
 	// Workers is the global cap on concurrent probe goroutines across all
@@ -137,6 +147,134 @@ type ScannerConfig struct {
 	// previous behaviour (and because the lookup requires the host to
 	// already be in the kernel's neighbour cache).
 	EnrichARP bool `json:"enrich_arp,omitempty"`
+}
+
+// SubnetProfile overrides the scanner defaults for one subnet. Each field
+// is optional; the zero value means "use the global ScannerConfig default".
+// The Subnet field is the only required entry — everything else inherits.
+type SubnetProfile struct {
+	// Subnet is the CIDR (required). Must be unique across profiles.
+	Subnet string `json:"subnet"`
+
+	// ScanInterval overrides ScannerConfig.ScanInterval. Use a long
+	// interval for guest networks, short for critical infra. Zero =
+	// inherit global.
+	ScanInterval Duration `json:"scan_interval,omitempty"`
+	// Timeout overrides ScannerConfig.Timeout. Slow links benefit from
+	// a longer per-dial budget. Zero = inherit global.
+	Timeout Duration `json:"timeout,omitempty"`
+	// ProbePorts overrides ScannerConfig.ProbePorts. nil = inherit
+	// global; an empty (non-nil) slice means "no liveness probe" — not
+	// supported, validate rejects the empty case.
+	ProbePorts []int `json:"probe_ports,omitempty"`
+	// DeepProbe overrides ScannerConfig.DeepProbe. Pointer so a profile
+	// can explicitly set it false while the global is true (otherwise
+	// the zero value would be ambiguous). Use config.True / False
+	// helpers below.
+	DeepProbe *bool `json:"deep_probe,omitempty"`
+	// DeepProbePorts overrides ScannerConfig.DeepProbePorts.
+	DeepProbePorts []int `json:"deep_probe_ports,omitempty"`
+	// UDPPorts overrides ScannerConfig.UDPPorts.
+	UDPPorts []int `json:"udp_ports,omitempty"`
+	// EnrichARP overrides ScannerConfig.EnrichARP. See DeepProbe re:
+	// pointer-bool.
+	EnrichARP *bool `json:"enrich_arp,omitempty"`
+}
+
+// True / False are bool-pointer helpers for SubnetProfile.DeepProbe and
+// EnrichARP. JSON unmarshalling handles the wire form; these are for Go
+// callers building profiles programmatically.
+func True() *bool  { v := true; return &v }
+func False() *bool { v := false; return &v }
+
+// ResolvedProfile is a fully-defaulted profile — every field is populated
+// from either the profile's own setting or the global ScannerConfig
+// fallback. Produced by ScannerConfig.Resolve(); consumed by the agent.
+type ResolvedProfile struct {
+	Subnet         string
+	ScanInterval   time.Duration
+	Timeout        time.Duration
+	ProbePorts     []int
+	DeepProbe      bool
+	DeepProbePorts []int
+	UDPPorts       []int
+	EnrichARP      bool
+}
+
+// Resolve flattens Subnets + Profiles into a unified list with every
+// field populated. The flat-Subnets form is preserved for backwards
+// compat: each entry becomes a profile with all overrides empty (so it
+// inherits every global default).
+//
+// Validation:
+//   - At most one of Subnets / Profiles may be set.
+//   - Profile.Subnet values must be unique.
+//   - Profile.Subnet must be a parseable CIDR (caller doesn't need to
+//     re-validate).
+func (c *ScannerConfig) Resolve() ([]ResolvedProfile, error) {
+	if len(c.Subnets) > 0 && len(c.Profiles) > 0 {
+		return nil, fmt.Errorf("scanner.subnets and scanner.profiles are mutually exclusive — pick one")
+	}
+	var profiles []SubnetProfile
+	switch {
+	case len(c.Profiles) > 0:
+		profiles = c.Profiles
+	case len(c.Subnets) > 0:
+		profiles = make([]SubnetProfile, len(c.Subnets))
+		for i, s := range c.Subnets {
+			profiles[i] = SubnetProfile{Subnet: s}
+		}
+	}
+	seen := make(map[string]bool, len(profiles))
+	out := make([]ResolvedProfile, 0, len(profiles))
+	for _, p := range profiles {
+		if p.Subnet == "" {
+			return nil, fmt.Errorf("scanner profile missing subnet")
+		}
+		if seen[p.Subnet] {
+			return nil, fmt.Errorf("scanner profile subnet %q listed twice", p.Subnet)
+		}
+		seen[p.Subnet] = true
+		out = append(out, resolveProfile(p, c))
+	}
+	return out, nil
+}
+
+func resolveProfile(p SubnetProfile, c *ScannerConfig) ResolvedProfile {
+	r := ResolvedProfile{
+		Subnet:         p.Subnet,
+		ScanInterval:   p.ScanInterval.Duration,
+		Timeout:        p.Timeout.Duration,
+		ProbePorts:     p.ProbePorts,
+		DeepProbePorts: p.DeepProbePorts,
+		UDPPorts:       p.UDPPorts,
+	}
+	if r.ScanInterval == 0 {
+		r.ScanInterval = c.ScanInterval.Duration
+	}
+	if r.Timeout == 0 {
+		r.Timeout = c.Timeout.Duration
+	}
+	if r.ProbePorts == nil {
+		r.ProbePorts = c.ProbePorts
+	}
+	if r.DeepProbePorts == nil {
+		r.DeepProbePorts = c.DeepProbePorts
+	}
+	if r.UDPPorts == nil {
+		r.UDPPorts = c.UDPPorts
+	}
+	if p.DeepProbe != nil {
+		r.DeepProbe = *p.DeepProbe
+	} else {
+		r.DeepProbe = c.DeepProbe
+	}
+	if p.EnrichARP != nil {
+		r.EnrichARP = *p.EnrichARP
+	} else {
+		r.EnrichARP = c.EnrichARP
+	}
+	return r
 }
 
 type LogConfig struct {

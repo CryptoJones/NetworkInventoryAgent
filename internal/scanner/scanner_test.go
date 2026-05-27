@@ -202,7 +202,7 @@ func newScanner(hosts *mockHostStore, scans *mockScanStore) *scanner.Scanner {
 
 func TestScanner_Scan_InvalidCIDR(t *testing.T) {
 	s := newScanner(newMockHostStore(), newMockScanStore())
-	_, err := s.Scan(t.Context(), "not-a-cidr")
+	_, err := s.Scan(t.Context(), "not-a-cidr", scanner.SubnetOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse CIDR")
 }
@@ -216,7 +216,7 @@ func TestScanner_Scan_MaxHostsGuard(t *testing.T) {
 		Workers:  4,
 		MaxHosts: 5,
 	})
-	_, err := s.Scan(t.Context(), "192.168.1.0/24")
+	_, err := s.Scan(t.Context(), "192.168.1.0/24", scanner.SubnetOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds limit")
 }
@@ -227,7 +227,7 @@ func TestScanner_Scan_ContextCancelled_CompletesGracefully(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // already cancelled before the scan starts
 
-	_, err := s.Scan(ctx, "192.168.1.0/30")
+	_, err := s.Scan(ctx, "192.168.1.0/30", scanner.SubnetOptions{})
 	// A pre-cancelled context should not produce an error — the scan
 	// exits early and the scan record is still finished normally.
 	require.NoError(t, err)
@@ -240,7 +240,7 @@ func TestScanner_Scan_CreatesAndFinishesScanRecord(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // cancel so no probing actually happens
 
-	_, err := s.Scan(ctx, "192.168.1.0/30")
+	_, err := s.Scan(ctx, "192.168.1.0/30", scanner.SubnetOptions{})
 	require.NoError(t, err)
 
 	scans.mu.Lock()
@@ -284,7 +284,7 @@ func TestScanner_Scan_PersistsOpenPort(t *testing.T) {
 		MaxHosts: 65535,
 	})
 
-	n, err := s.Scan(t.Context(), "127.0.0.1/32")
+	n, err := s.Scan(t.Context(), "127.0.0.1/32", scanner.SubnetOptions{})
 	require.NoError(t, err)
 	if n == 0 {
 		t.Skip("no probe port answered on 127.0.0.1; cannot exercise port persistence")
@@ -341,7 +341,7 @@ func TestScanner_Scan_DeepProbePersistsExtraOpenPorts(t *testing.T) {
 		DeepProbePorts: []int{livePort, deepPort}, // livePort skipped (already known open)
 	})
 
-	n, err := s.Scan(t.Context(), "127.0.0.1/32")
+	n, err := s.Scan(t.Context(), "127.0.0.1/32", scanner.SubnetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 
@@ -393,7 +393,7 @@ func TestScanner_Scan_PopulatesDeviceType(t *testing.T) {
 		ProbePorts: []int{11211},
 	})
 
-	n, err := s.Scan(t.Context(), "127.0.0.1/32")
+	n, err := s.Scan(t.Context(), "127.0.0.1/32", scanner.SubnetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 
@@ -417,7 +417,7 @@ func TestScanner_Scan_DoesNotProbeNetworkOrBroadcast(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := s.Scan(ctx, "10.0.0.0/30")
+	_, err := s.Scan(ctx, "10.0.0.0/30", scanner.SubnetOptions{})
 	require.NoError(t, err)
 
 	// With a pre-cancelled context nothing is probed, but verify we stored

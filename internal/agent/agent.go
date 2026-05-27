@@ -27,6 +27,12 @@ type Agent struct {
 	alerts  alerts.Emitter
 	now     func() time.Time
 
+	// profiles is the resolved per-subnet config built at New time.
+	// Each entry carries its own ScanInterval; nextDue tracks when its
+	// next scan is permitted.
+	profiles []config.ResolvedProfile
+	nextDue  map[string]time.Time
+
 	// trigger is a buffered channel that lets external callers
 	// (e.g. POST /scan) force an immediate cycle without waiting for the
 	// next ticker firing. Capacity 1 so concurrent triggers coalesce.
@@ -46,9 +52,13 @@ func New(
 	scans store.ScanStore,
 	tracker *health.Tracker,
 	alertEmitter alerts.Emitter,
-) *Agent {
+) (*Agent, error) {
 	if alertEmitter == nil {
 		alertEmitter = alerts.NoopEmitter()
+	}
+	profiles, err := cfg.Resolve()
+	if err != nil {
+		return nil, err
 	}
 	return &Agent{
 		name:  name,
@@ -67,11 +77,13 @@ func New(
 			UDPPorts:       cfg.UDPPorts,
 			EnrichARP:      cfg.EnrichARP,
 		}),
-		tracker: tracker,
-		alerts:  alertEmitter,
-		now:     time.Now,
-		trigger: make(chan struct{}, 1),
-	}
+		tracker:  tracker,
+		alerts:   alertEmitter,
+		now:      time.Now,
+		profiles: profiles,
+		nextDue:  make(map[string]time.Time, len(profiles)),
+		trigger:  make(chan struct{}, 1),
+	}, nil
 }
 
 // Trigger requests an out-of-cycle scan. Returns true if the request was
@@ -88,15 +100,20 @@ func (a *Agent) Trigger() bool {
 	}
 }
 
-// Run starts the scan loop. It executes one scan immediately, then repeats on
-// cfg.ScanInterval. It blocks until ctx is cancelled.
+// Run starts the scan loop. It executes one cycle immediately (every
+// profile, regardless of its own interval), then ticks at the shortest
+// configured per-profile interval. Each subsequent tick only scans
+// profiles whose next-due time has passed. Blocks until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) {
 	log := slog.With("agent", a.name)
-	log.Info("scan loop started", "subnets", a.cfg.Subnets, "interval", a.cfg.ScanInterval)
+	log.Info("scan loop started",
+		"profiles", len(a.profiles),
+		"tick_interval", a.tickInterval(),
+	)
 
-	a.runCycle(ctx, log)
+	a.runCycle(ctx, log, true /* forceAll */)
 
-	ticker := time.NewTicker(a.cfg.ScanInterval.Duration)
+	ticker := time.NewTicker(a.tickInterval())
 	defer ticker.Stop()
 
 	for {
@@ -105,39 +122,82 @@ func (a *Agent) Run(ctx context.Context) {
 			log.Info("scan loop stopped")
 			return
 		case <-ticker.C:
-			a.runCycle(ctx, log)
+			a.runCycle(ctx, log, false)
 		case <-a.trigger:
 			log.Info("on-demand scan triggered")
-			a.runCycle(ctx, log)
+			a.runCycle(ctx, log, true)
 		}
 	}
 }
 
-func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
-	log.Info("scan cycle started", "subnets", len(a.cfg.Subnets))
+// tickInterval is the shortest configured profile interval. The main
+// loop ticks at this cadence and selects per-tick which profiles are
+// actually due. A safety floor of one second prevents pathological
+// busy-loops when an operator types "1ns" by accident.
+func (a *Agent) tickInterval() time.Duration {
+	const floor = time.Second
+	min := time.Duration(0)
+	for _, p := range a.profiles {
+		if p.ScanInterval <= 0 {
+			continue
+		}
+		if min == 0 || p.ScanInterval < min {
+			min = p.ScanInterval
+		}
+	}
+	if min < floor {
+		min = floor
+	}
+	return min
+}
+
+// runCycle scans every profile whose nextDue has passed (or all of them
+// when forceAll is true — used for the initial cycle and on-demand
+// triggers).
+func (a *Agent) runCycle(ctx context.Context, log *slog.Logger, forceAll bool) {
 	started := a.now()
 
 	// Snapshot the pre-cycle host inventory so we can diff it against
 	// the post-cycle list and fire HostDiscovered / HostVanished events.
-	// Snapshotting before the scan (rather than tracking what the
-	// scanner returned) means the diff correctly reflects "ground truth
-	// changed", including hosts the operator added or removed
-	// externally.
 	prevHosts := snapshotByIP(ctx, a.hosts, log)
+
+	// Select due profiles. With no profiles configured (zero-config
+	// "watchdog only" deployment), due is empty but housekeeping below
+	// — prune, diff, tracker updates — still runs.
+	due := make([]config.ResolvedProfile, 0, len(a.profiles))
+	for _, p := range a.profiles {
+		if forceAll || !started.Before(a.nextDue[p.Subnet]) {
+			due = append(due, p)
+		}
+	}
+
+	if len(due) > 0 {
+		log.Info("scan cycle started", "due_profiles", len(due), "total_profiles", len(a.profiles))
+	}
 
 	cycleHosts := 0
 	cycleHealthy := true
-	for _, subnet := range a.cfg.Subnets {
+	for _, p := range due {
 		metrics.ScansTotal.Inc()
-		n, err := a.scanner.Scan(ctx, subnet)
+		n, err := a.scanner.Scan(ctx, p.Subnet, scanner.SubnetOptions{
+			Timeout:        p.Timeout,
+			ProbePorts:     p.ProbePorts,
+			DeepProbe:      boolPtr(p.DeepProbe),
+			DeepProbePorts: p.DeepProbePorts,
+			UDPPorts:       p.UDPPorts,
+			EnrichARP:      boolPtr(p.EnrichARP),
+		})
 		if err != nil {
 			metrics.ScanErrorsTotal.Inc()
-			log.Warn("subnet scan failed", "subnet", subnet, "err", err)
+			log.Warn("subnet scan failed", "subnet", p.Subnet, "err", err)
 			cycleHealthy = false
 			continue
 		}
-		log.Debug("subnet scanned", "subnet", subnet, "hosts", n)
+		log.Debug("subnet scanned", "subnet", p.Subnet, "hosts", n, "interval", p.ScanInterval)
 		cycleHosts += n
+		// Schedule the next due time. Computed off the start of THIS
+		// cycle (not now) so a slow scan doesn't drift the cadence.
+		a.nextDue[p.Subnet] = started.Add(p.ScanInterval)
 	}
 
 	if pruned := a.pruneStale(ctx, log, started); pruned > 0 {
@@ -167,11 +227,13 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 	a.tracker.SetHealthy(cycleHealthy)
 
 	duration := a.now().Sub(started)
-	interval := a.cfg.ScanInterval.Duration
+	// Warning threshold: half the tick interval. Slower than that and
+	// the loop is at risk of dropped firings.
+	interval := a.tickInterval()
 	if interval > 0 && duration > interval/2 {
-		log.Warn("scan cycle nearly exceeded interval",
+		log.Warn("scan cycle nearly exceeded tick interval",
 			"duration", duration.Round(time.Millisecond),
-			"interval", interval,
+			"tick_interval", interval,
 		)
 	}
 	log.Info("scan cycle complete",
@@ -181,6 +243,12 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger) {
 		"healthy", cycleHealthy,
 	)
 }
+
+// boolPtr is a small inline helper for passing a value bool to a *bool
+// option field. Pointer-bools let a profile distinguish "explicit false"
+// from "inherit default"; from the resolved-profile side we know which
+// way the bool was already resolved, so we always pass a non-nil pointer.
+func boolPtr(b bool) *bool { return &b }
 
 // pruneStale deletes hosts whose last_seen is older than the configured
 // HostTTL. Returns the number of hosts pruned. Disabled when HostTTL is 0

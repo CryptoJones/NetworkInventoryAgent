@@ -110,10 +110,86 @@ func New(opts Options) *Scanner {
 	}
 }
 
+// SubnetOptions overrides scanner-level defaults for one Scan call. Every
+// field is optional; the zero value inherits the default the scanner was
+// constructed with. Per-subnet profile configuration plumbs these values
+// in from the agent so an operator can scan critical infrastructure
+// aggressively while leaving a guest network on the lazy default.
+type SubnetOptions struct {
+	// Timeout overrides Options.Timeout for every dial in this scan. 0
+	// = inherit.
+	Timeout time.Duration
+	// ProbePorts overrides Options.ProbePorts. nil = inherit.
+	ProbePorts []int
+	// DeepProbe overrides Options.DeepProbe. Pointer-bool so a profile
+	// can explicitly disable deep probing even when the scanner-level
+	// default is on. nil = inherit.
+	DeepProbe *bool
+	// DeepProbePorts overrides Options.DeepProbePorts. nil = inherit.
+	DeepProbePorts []int
+	// UDPPorts overrides Options.UDPPorts. nil = inherit.
+	UDPPorts []int
+	// EnrichARP overrides Options.EnrichARP. See DeepProbe re: pointer-bool.
+	EnrichARP *bool
+}
+
+// effectiveOpts is the per-Scan resolved view — every Scanner-level
+// default merged with the per-call SubnetOptions. Built once at the top
+// of Scan and passed by value to the per-host goroutine. Saves repeating
+// the "if zero use default" check at every read site.
+type effectiveOpts struct {
+	timeout        time.Duration
+	probePorts     []int
+	deepProbe      bool
+	deepProbePorts []int
+	udpPorts       []int
+	enrichARP      bool
+}
+
+func (s *Scanner) resolve(opts SubnetOptions) effectiveOpts {
+	e := effectiveOpts{
+		timeout:        opts.Timeout,
+		probePorts:     opts.ProbePorts,
+		deepProbePorts: opts.DeepProbePorts,
+		udpPorts:       opts.UDPPorts,
+		deepProbe:      s.deepProbe,
+		enrichARP:      s.enrichARP,
+	}
+	if e.timeout == 0 {
+		e.timeout = s.timeout
+	}
+	if e.probePorts == nil {
+		e.probePorts = s.probePorts
+	}
+	if e.deepProbePorts == nil {
+		e.deepProbePorts = s.deepProbePorts
+	}
+	if e.udpPorts == nil {
+		e.udpPorts = s.udpPorts
+	}
+	if opts.DeepProbe != nil {
+		e.deepProbe = *opts.DeepProbe
+	}
+	if opts.EnrichARP != nil {
+		e.enrichARP = *opts.EnrichARP
+	}
+	// When deep probing is enabled but no ports given (per-call OR
+	// per-Scanner), fall back to the default deep port set rather than
+	// no-op.
+	if e.deepProbe && len(e.deepProbePorts) == 0 {
+		e.deepProbePorts = defaultDeepProbePorts
+	}
+	return e
+}
+
 // Scan probes every host in subnet (CIDR notation) for open TCP ports and
 // records each live host in the inventory. It returns the number of live hosts
 // found. The scan record in the DB is updated when the scan finishes.
-func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
+//
+// Pass SubnetOptions{} to use the scanner-level defaults (this is the
+// pre-26.15 behaviour). Per-subnet profiles populate fields to override.
+func (s *Scanner) Scan(ctx context.Context, subnet string, opts SubnetOptions) (int, error) {
+	eo := s.resolve(opts)
 	_, ipNet, err := net.ParseCIDR(subnet)
 	if err != nil {
 		return 0, fmt.Errorf("parse CIDR %q: %w", subnet, err)
@@ -157,7 +233,7 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 		wg.Add(1)
 		go func(addr string) {
 			defer func() { <-s.sem; wg.Done() }()
-			openPort, ok := s.probe(ctx, addr)
+			openPort, ok := s.probe(ctx, addr, eo.timeout, eo.probePorts)
 			if !ok {
 				metrics.ProbeFailureTotal.Inc()
 				return
@@ -169,10 +245,10 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 				FirstSeen: startedAt,
 				LastSeen:  startedAt,
 			}
-			if fp := fingerprint(ctx, addr, openPort, s.timeout); fp != "" {
+			if fp := fingerprint(ctx, addr, openPort, eo.timeout); fp != "" {
 				host.OSFingerprint = fp
 			}
-			if s.enrichARP {
+			if eo.enrichARP {
 				if mac, vendor := lookupARP(addr); mac != "" {
 					host.MACAddress = mac
 					host.Vendor = vendor
@@ -199,11 +275,11 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 				livenessService := host.OSFingerprint
 				s.upsertPort(ctx, hostID, addr, openPort, models.TCP, models.StateOpen, livenessService, startedAt)
 			}
-			if s.deepProbe && s.ports != nil {
-				openTCP = append(openTCP, s.deepScan(ctx, hostID, addr, openPort, startedAt)...)
+			if eo.deepProbe && s.ports != nil {
+				openTCP = append(openTCP, s.deepScan(ctx, hostID, addr, openPort, startedAt, eo.timeout, eo.deepProbePorts)...)
 			}
-			if len(s.udpPorts) > 0 && s.ports != nil {
-				openUDP = s.udpScan(ctx, hostID, addr, startedAt)
+			if len(eo.udpPorts) > 0 && s.ports != nil {
+				openUDP = s.udpScan(ctx, hostID, addr, startedAt, eo.timeout, eo.udpPorts)
 			}
 
 			// Classify now that every probe stage has reported. A
@@ -232,23 +308,27 @@ func (s *Scanner) Scan(ctx context.Context, subnet string) (int, error) {
 	return count, nil
 }
 
-// probe dials every configured probe port concurrently and returns the first
-// port that answers, or (0, false) if all dials fail within s.timeout.
-// Concurrent fan-out collapses worst-case latency from len(probePorts)*timeout
-// to ~1*timeout for dead hosts — the original sequential probe could keep a
+// probe dials every probe port concurrently and returns the first port
+// that answers, or (0, false) if all dials fail within timeout. Concurrent
+// fan-out collapses worst-case latency from len(probePorts)*timeout to
+// ~1*timeout for dead hosts — the original sequential probe could keep a
 // /24 sweep running longer than the scan interval.
-func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
-	dialCtx, cancel := context.WithTimeout(ctx, s.timeout)
+//
+// Timeout and probePorts are passed by the caller (rather than read from
+// Scanner state) so per-subnet profile overrides flow through without
+// mutating the shared Scanner.
+func (s *Scanner) probe(ctx context.Context, ip string, timeout time.Duration, probePorts []int) (int, bool) {
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	type result struct {
 		port int
 		ok   bool
 	}
-	results := make(chan result, len(s.probePorts))
-	d := net.Dialer{Timeout: s.timeout}
+	results := make(chan result, len(probePorts))
+	d := net.Dialer{Timeout: timeout}
 
-	for _, port := range s.probePorts {
+	for _, port := range probePorts {
 		go func(port int) {
 			conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 			if err != nil {
@@ -261,7 +341,7 @@ func (s *Scanner) probe(ctx context.Context, ip string) (int, bool) {
 	}
 
 	var firstOpen int
-	for range s.probePorts {
+	for range probePorts {
 		r := <-results
 		if r.ok && firstOpen == 0 {
 			firstOpen = r.port
@@ -294,21 +374,19 @@ func (s *Scanner) upsertPort(ctx context.Context, hostID int64, ip string, port 
 	metrics.PortsUpsertedTotal.Inc()
 }
 
-// deepScan dials each port in s.deepProbePorts (skipping the one already
+// deepScan dials each port in deepProbePorts (skipping the one already
 // confirmed by the liveness probe), persists every successful dial, and
 // returns the list of newly-open ports so the classifier can see the full
-// picture. The fan-out shares the global sem so deep probing does not blow
-// past the configured Workers budget. Closed/filtered ports are
-// intentionally NOT recorded — the ports table is a positive log of what's
-// open, not an inverse-index of what isn't.
-func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOpen int, ts time.Time) []int {
-	d := net.Dialer{Timeout: s.timeout}
+// picture. timeout + deepProbePorts are caller-supplied so per-subnet
+// profiles override.
+func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOpen int, ts time.Time, timeout time.Duration, deepProbePorts []int) []int {
+	d := net.Dialer{Timeout: timeout}
 	var (
 		mu  sync.Mutex
 		out []int
 		wg  sync.WaitGroup
 	)
-	for _, port := range s.deepProbePorts {
+	for _, port := range deepProbePorts {
 		if port == knownOpen {
 			continue
 		}
@@ -330,7 +408,7 @@ func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOp
 			// the server (or client) to speak first — easier to
 			// just redial inside fingerprint() than juggle a half-
 			// initialised socket here.
-			service := fingerprint(ctx, ip, port, s.timeout)
+			service := fingerprint(ctx, ip, port, timeout)
 			s.upsertPort(ctx, hostID, ip, port, models.TCP, models.StateOpen, service, ts)
 			mu.Lock()
 			out = append(out, port)
@@ -341,23 +419,24 @@ func (s *Scanner) deepScan(ctx context.Context, hostID int64, ip string, knownOp
 	return out
 }
 
-// udpScan tries each UDP port in s.udpPorts and returns the list of UDP
+// udpScan tries each UDP port in udpPorts and returns the list of UDP
 // ports that came back open (state=Open only — Closed responses are
 // persisted but excluded from the return so the classifier reasons about
-// services, not negative observations).
+// services, not negative observations). timeout + udpPorts are caller-
+// supplied so per-subnet profiles override.
 //
 // Best-effort semantics:
 //   - any bytes read back → Open
 //   - connection-refused (Linux surfaces ICMP port-unreachable this way) → Closed
 //   - anything else (no reply within timeout) → not recorded, since the
 //     ambiguous case would otherwise dominate the ports table.
-func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.Time) []int {
+func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.Time, timeout time.Duration, udpPorts []int) []int {
 	var (
 		mu  sync.Mutex
 		out []int
 		wg  sync.WaitGroup
 	)
-	for _, port := range s.udpPorts {
+	for _, port := range udpPorts {
 		select {
 		case s.sem <- struct{}{}:
 		case <-ctx.Done():
@@ -366,7 +445,7 @@ func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.
 		wg.Add(1)
 		go func(port int) {
 			defer func() { <-s.sem; wg.Done() }()
-			state, ok := probeUDP(ctx, ip, port, s.timeout)
+			state, ok := probeUDP(ctx, ip, port, timeout)
 			if !ok {
 				return
 			}

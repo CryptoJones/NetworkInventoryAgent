@@ -163,9 +163,9 @@ func (s *Server) handleAPIHostDetail(w http.ResponseWriter, r *http.Request) {
 type hostFilter struct {
 	vendor     string
 	deviceType string
-	hostname   string  // lowercase, for case-insensitive substring
+	hostname   string     // lowercase, for case-insensitive substring
 	subnet     *net.IPNet // nil = no subnet filter
-	port       int     // 0 = no port filter
+	port       int        // 0 = no port filter
 }
 
 func parseHostFilter(q url.Values) (hostFilter, error) {
