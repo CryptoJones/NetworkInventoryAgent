@@ -30,6 +30,33 @@ No C toolchain is required. The SQLite driver (`modernc.org/sqlite`) is pure Go.
 
 ## Installation
 
+### Docker (multi-arch, signed)
+
+```bash
+docker pull ghcr.io/cryptojones/networkinventoryagent:latest
+docker run --rm ghcr.io/cryptojones/networkinventoryagent:latest -version
+```
+
+The `:latest` and `:<version>` tags both point at multi-arch manifests
+(linux/amd64 + linux/arm64); your Docker client picks the right one for
+the host. The manifests are signed with `cosign` keyless OIDC — verify with:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/CryptoJones/NetworkInventoryAgent/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/cryptojones/networkinventoryagent:<version>
+```
+
+The image's default entrypoint is `agent` (standalone). To run the paired
+Wintermute/Neuromancer mode, override the entrypoint:
+
+```bash
+docker run --rm \
+  --entrypoint /usr/local/bin/wintermute \
+  ghcr.io/cryptojones/networkinventoryagent:latest -version
+```
+
 ### Pre-built binaries (signed)
 
 Tagged releases at <https://github.com/CryptoJones/NetworkInventoryAgent/releases>

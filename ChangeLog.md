@@ -17,6 +17,51 @@ _No unreleased changes._
 
 ---
 
+## 26.10 — 2026-05-27
+
+Container distribution. Adds multi-arch Docker images on the GitHub
+Container Registry alongside the existing binary archives, with the same
+cosign keyless OIDC signing flow extended to the image manifests.
+
+### Added
+
+- **`ghcr.io/cryptojones/networkinventoryagent:<version>`** — multi-arch
+  manifest covering linux/amd64 + linux/arm64. `:latest` resolves to
+  the same image as the most recent `vYY.NN` tag. Default entrypoint is
+  `agent`; `wintermute` and `neuromancer` are present in the same image
+  and reachable via `--entrypoint /usr/local/bin/wintermute` etc.
+- **`Dockerfile.goreleaser`** — slim COPY-only Dockerfile consumed by
+  goreleaser. Pre-built binaries are copied in rather than recompiled
+  per arch (the host-level goreleaser build matrix already produced
+  them). The existing top-level `Dockerfile` is unchanged so
+  `docker build .` from a checkout still works.
+- **`cosign` signing on the published manifests.** Verify with:
+  ```
+  cosign verify ghcr.io/cryptojones/networkinventoryagent:26.10 \
+    --certificate-identity-regexp 'https://github.com/CryptoJones/NetworkInventoryAgent/' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  ```
+
+### Changed
+
+- **`.github/workflows/release.yml`** now sets up QEMU + Docker Buildx
+  and logs in to ghcr.io before invoking goreleaser, so the cross-arch
+  `linux/arm64` layer builds succeed on the amd64-only GitHub runner.
+- **README** gains a Docker section with the `docker pull` quickstart
+  and the `cosign verify` snippet.
+
+### Notes
+
+- The image's default entrypoint is `agent` (standalone single-agent
+  binary). For the Wintermute/Neuromancer pair, the existing
+  `docker-compose.yml` still applies — point its `image:` at
+  `ghcr.io/cryptojones/networkinventoryagent:26.10` and you skip the
+  `docker build` step.
+- Pulls are unauthenticated for public images; `docker login ghcr.io`
+  is only needed if a future release flips visibility to private.
+
+---
+
 ## 26.09 — 2026-05-27
 
 Post-Planning.md tightening pass — clears the lint debt that 26.06's
