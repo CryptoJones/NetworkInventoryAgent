@@ -157,6 +157,7 @@ var (
 	ProbeSuccessTotal     = Default.Counter("inventory_probe_success_total", "TCP probes that found an open port")
 	ProbeFailureTotal     = Default.Counter("inventory_probe_failure_total", "TCP probes that found no open port")
 	UDPProbeSuccessTotal  = Default.Counter("inventory_udp_probe_success_total", "UDP probes that received a response")
+	UDPProbeFailureTotal  = Default.Counter("inventory_udp_probe_failure_total", "UDP probes that got a definitive closed (ICMP unreachable) response")
 	DBErrorsTotal         = Default.Counter("inventory_db_errors_total", "Database operations that returned an error")
 	WatchdogChecksTotal   = Default.Counter("inventory_watchdog_checks_total", "Watchdog ticks executed")
 	WatchdogFailuresTotal = Default.Counter("inventory_watchdog_failures_total", "Watchdog ticks where the peer was unreachable")

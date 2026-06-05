@@ -241,7 +241,7 @@ func (s *Scanner) Scan(ctx context.Context, subnet string, opts SubnetOptions) (
 			metrics.ProbeSuccessTotal.Inc()
 			host := &models.Host{
 				IPAddress: addr,
-				Hostname:  reverseDNS(ctx, addr),
+				Hostname:  reverseDNS(ctx, addr, eo.timeout),
 				FirstSeen: startedAt,
 				LastSeen:  startedAt,
 			}
@@ -461,6 +461,10 @@ func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.
 				mu.Lock()
 				out = append(out, port)
 				mu.Unlock()
+			} else {
+				// Definitive closed (ICMP port-unreachable); ambiguous
+				// no-reply probes never reach here (probeUDP returns ok=false).
+				metrics.UDPProbeFailureTotal.Inc()
 			}
 		}(port)
 	}
@@ -498,11 +502,15 @@ func probeUDP(ctx context.Context, ip string, port int, timeout time.Duration) (
 	return "", false
 }
 
-// reverseDNS does a best-effort PTR lookup with a tight timeout. Returns an
-// empty string if anything fails — Hostname stays absent in the inventory
-// rather than being populated with a misleading value.
-func reverseDNS(ctx context.Context, ip string) string {
-	rctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+// reverseDNS does a best-effort PTR lookup bounded by the caller's per-host
+// timeout (the configured dial budget), falling back to 500ms when unset.
+// Returns an empty string if anything fails — Hostname stays absent in the
+// inventory rather than being populated with a misleading value.
+func reverseDNS(ctx context.Context, ip string, timeout time.Duration) string {
+	if timeout <= 0 {
+		timeout = 500 * time.Millisecond
+	}
+	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	names, err := net.DefaultResolver.LookupAddr(rctx, ip)
 	if err != nil || len(names) == 0 {
