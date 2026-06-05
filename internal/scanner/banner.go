@@ -253,6 +253,31 @@ func postgresProbe(ctx context.Context, ip string, port int, timeout time.Durati
 	return ""
 }
 
+// vncBanner reads the RFB ProtocolVersion greeting a VNC server sends on
+// connect (12 bytes, e.g. "RFB 003.008\n") and returns "VNC: RFB 003.008".
+// The greeting is the server's first message, so this is passive. Returns ""
+// unless the line starts with "RFB ", so a non-VNC service squatting on 5900
+// isn't mislabelled.
+func vncBanner(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	line, err := bufio.NewReader(&capReader{r: conn, n: maxBannerBytes}).ReadString('\n')
+	if err != nil && line == "" {
+		return ""
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if !strings.HasPrefix(line, "RFB ") {
+		return ""
+	}
+	return "VNC: " + line
+}
+
 // capReader wraps an io.Reader with a hard byte cap, defended against a
 // peer that sends data without an end-of-line for longer than we'd want
 // to wait. Used by lineBanner.

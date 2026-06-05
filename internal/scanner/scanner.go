@@ -558,6 +558,8 @@ func fingerprint(ctx context.Context, ip string, port int, timeout time.Duration
 		return redisInfo(ctx, ip, port, timeout)
 	case 11211:
 		return memcachedVersion(ctx, ip, port, timeout)
+	case 5900:
+		return vncBanner(ctx, ip, port, timeout)
 	default:
 		return ""
 	}

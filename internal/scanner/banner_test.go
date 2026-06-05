@@ -190,6 +190,25 @@ func TestPostgresProbe_NotPostgres(t *testing.T) {
 	}
 }
 
+func TestVNCBanner_Identified(t *testing.T) {
+	addr := startLineGreeting(t, "RFB 003.008\n")
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := vncBanner(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "VNC: RFB 003.008" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestVNCBanner_NotVNC(t *testing.T) {
+	// A non-RFB greeting on the port must not be labelled VNC.
+	addr := startLineGreeting(t, "220 some-ftp-server\r\n")
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := vncBanner(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "" {
+		t.Errorf("got %q, want empty for non-RFB greeting", got)
+	}
+}
+
 // --- helpers ---
 
 // startRequestResponse accepts one connection, consumes the client's
