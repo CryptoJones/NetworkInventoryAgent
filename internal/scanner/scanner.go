@@ -541,6 +541,12 @@ func fingerprint(ctx context.Context, ip string, port int, timeout time.Duration
 		return tlsHTTPSFingerprint(ctx, ip, port, timeout)
 	case 3306:
 		return mysqlGreeting(ctx, ip, port, timeout)
+	case 5432:
+		return postgresProbe(ctx, ip, port, timeout)
+	case 6379:
+		return redisInfo(ctx, ip, port, timeout)
+	case 11211:
+		return memcachedVersion(ctx, ip, port, timeout)
 	default:
 		return ""
 	}
