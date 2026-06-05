@@ -17,6 +17,38 @@ _No unreleased changes._
 
 ---
 
+## 26.26 — 2026-06-05
+
+OUI table expansion for camera / NAS / IoT vendors, wired into the
+classifier. The 26.23 `camera` rule could only fire on RTSP (not a default
+probe port), so it rarely triggered; this adds the vendor OUIs that make
+vendor-based detection work. Post-backlog feature work (no `Planning.md`
+number).
+
+### Added
+
+- **14 new OUI prefixes**, each verified against the IEEE registry (via
+  maclookup.app): Hikvision (3), Dahua (2), Axis (2), QNAP (1),
+  Ubiquiti (3), Espressif (3).
+- **Classifier vendor rules** using them: Hikvision/Dahua/Axis → `camera`,
+  QNAP → `nas` (joining Synology/WD), Espressif → `embedded` (joining
+  Raspberry Pi).
+
+### Tests
+
+- `internal/scanner/arp_test.go` — the new prefixes resolve to the right
+  vendor, plus a guard that `00:08:9b` stays **not** QNAP (it's ICP
+  Electronics — a candidate that verification rejected).
+- `internal/scanner/classify_test.go` — camera/nas/embedded by vendor.
+
+### Notes
+
+- Verification mattered: a plausible "QNAP" prefix (`00:08:9b`) turned out
+  to be ICP Electronics and was excluded rather than shipped wrong.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.25 — 2026-06-05
 
 Pagination for the admin host and scan list pages. `/hosts` and `/scans`

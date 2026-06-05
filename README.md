@@ -13,7 +13,7 @@ The system is designed to run as **two cooperating agent instances** — named *
 - **Active discovery** — concurrent TCP-probe scanning across configurable CIDR ranges to find live hosts. Optional deep TCP and UDP probe passes per profile.
 - **Asset fingerprinting** — banner-grab on SSH, FTP, SMTP, POP3, IMAP, HTTP, HTTPS (with TLS cert peek), MySQL handshake, PostgreSQL (SSLRequest probe), Redis (`INFO`), Memcached (`version`), Telnet, plus UDP DNS and NTP (stratum) probes. Stored per-port in `Port.Service`.
 - **Device-type classifier** — heuristic rules over (vendor, OS banner, open ports) tag hosts as printer / router / hypervisor / windows-host / windows-server / windows-dc / nas / database (mysql|postgres|…) / mail-server / dns-server / kubernetes-node / container-host / camera / linux-host / appliance / iot-broker / embedded.
-- **MAC + vendor enrichment** — `/proc/net/arp` lookup on Linux + embedded OUI prefix table for ~80 common vendors.
+- **MAC + vendor enrichment** — `/proc/net/arp` lookup on Linux + embedded OUI prefix table for ~90 common vendors, including major IP-camera (Hikvision/Dahua/Axis), NAS (Synology/QNAP/WD), networking (Ubiquiti), and IoT (Espressif) brands that also drive device classification.
 - **Per-subnet scan profiles** — aggressive hourly deep scans on critical infra, lazy daily liveness on guest networks, all in one config.
 - **Change detection + alerts** — diffs host inventory each cycle; fires `host.discovered` / `host.vanished` events to HTTP webhook and/or RFC 5424 syslog.
 - **JSON query API** — `/api/v1/hosts` with filters (vendor, device type, hostname, subnet, port) and pagination; `/api/v1/hosts/{ip}` with nested ports.
