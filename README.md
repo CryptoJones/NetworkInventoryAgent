@@ -11,7 +11,7 @@ The system is designed to run as **two cooperating agent instances** — named *
 ## Features
 
 - **Active discovery** — concurrent TCP-probe scanning across configurable CIDR ranges to find live hosts. Optional deep TCP and UDP probe passes per profile.
-- **Asset fingerprinting** — banner-grab on SSH, FTP, SMTP, POP3, IMAP, HTTP, HTTPS (with TLS cert peek), MySQL handshake, Telnet. Stored per-port in `Port.Service`.
+- **Asset fingerprinting** — banner-grab on SSH, FTP, SMTP, POP3, IMAP, HTTP, HTTPS (with TLS cert peek), MySQL handshake, PostgreSQL (SSLRequest probe), Redis (`INFO`), Memcached (`version`), Telnet. Stored per-port in `Port.Service`.
 - **Device-type classifier** — heuristic rules over (vendor, OS banner, open ports) tag hosts as printer / router / hypervisor / windows-host / windows-dc / database (mysql|postgres|…) / mail-server / linux-host / appliance / iot-broker / embedded.
 - **MAC + vendor enrichment** — `/proc/net/arp` lookup on Linux + embedded OUI prefix table for ~80 common vendors.
 - **Per-subnet scan profiles** — aggressive hourly deep scans on critical infra, lazy daily liveness on guest networks, all in one config.

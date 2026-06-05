@@ -17,6 +17,43 @@ _No unreleased changes._
 
 ---
 
+## 26.21 — 2026-06-05
+
+Service fingerprinting for PostgreSQL, Redis, and Memcached. These ports
+(5432, 6379, 11211) were already in the deep-probe list and recorded as
+open, but `fingerprint()` had no handler for them, so `Port.Service` was
+always empty — operators couldn't tell a Redis from a random open port.
+Post-backlog feature work (no `Planning.md` number).
+
+### Added
+
+- **PostgreSQL identification** (`postgresProbe`) — issues the SSLRequest
+  startup packet and reads the single-byte `S`/`N` reply. Reliable
+  identification without authenticating; labelled `PostgreSQL`.
+- **Redis/Valkey fingerprinting** (`redisInfo`) — sends `INFO server` and
+  parses `redis_version:` → `Redis: <version>`. An auth-gated server
+  (`-NOAUTH`) is still identified as `Redis (auth required)`.
+- **Memcached fingerprinting** (`memcachedVersion`) — sends the text
+  `version` command → `Memcached: <version>`.
+
+### Changed
+
+- **`fingerprint()` now dispatches ports 5432/6379/11211** to the new
+  handlers; all other ports are unchanged.
+
+### Tests
+
+- `internal/scanner/banner_test.go` — Redis version + NOAUTH paths,
+  Memcached version + non-memcached reply, Postgres `S`/`N` identification
+  + non-postgres reply. Adds a `startRequestResponse` test helper for
+  client-speaks-first protocols.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.20 — 2026-06-05
 
 Scan-history retention. The `scans` table grew without bound: hosts had a
