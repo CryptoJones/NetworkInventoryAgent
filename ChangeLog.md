@@ -17,6 +17,31 @@ _No unreleased changes._
 
 ---
 
+## 26.28 — 2026-06-05
+
+JSON scan-history API. The query API exposed hosts but not scans;
+programmatic consumers (freshness/coverage dashboards) had to scrape the
+HTML `/scans` page. Adds a symmetric endpoint. Post-backlog feature work
+(no `Planning.md` number).
+
+### Added
+
+- **`GET /api/v1/scans`** — paginated JSON scan history with the same
+  `?limit=`/`?offset=` envelope (`{total,limit,offset,scans}`) as
+  `/api/v1/hosts`, plus an optional `?subnet=` exact-match filter. Newest
+  first.
+
+### Tests
+
+- `internal/admin/api_test.go` — full list, pagination (total vs page),
+  subnet filter, and invalid `limit` → 400.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.27 — 2026-06-05
 
 Scanner config-honesty fixes. Two small consistency gaps. Post-backlog

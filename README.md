@@ -16,7 +16,7 @@ The system is designed to run as **two cooperating agent instances** — named *
 - **MAC + vendor enrichment** — `/proc/net/arp` lookup on Linux + embedded OUI prefix table for ~90 common vendors, including major IP-camera (Hikvision/Dahua/Axis), NAS (Synology/QNAP/WD), networking (Ubiquiti), and IoT (Espressif) brands that also drive device classification.
 - **Per-subnet scan profiles** — aggressive hourly deep scans on critical infra, lazy daily liveness on guest networks, all in one config.
 - **Change detection + alerts** — diffs host inventory each cycle; fires `host.discovered` / `host.vanished` events to HTTP webhook and/or RFC 5424 syslog.
-- **JSON query API** — `/api/v1/hosts` with filters (vendor, device type, hostname, subnet, port) and pagination; `/api/v1/hosts/{ip}` with nested ports.
+- **JSON query API** — `/api/v1/hosts` with filters (vendor, device type, hostname, subnet, port) and pagination; `/api/v1/hosts/{ip}` with nested ports; `/api/v1/scans` paginated scan history (optional `subnet` filter).
 - **Continuous monitoring** — periodic re-scans detect new devices, removed devices, and configuration changes over time.
 - **Mutual watchdog** — two agent instances cross-check each other for liveness, scan freshness, and inventory consistency. Optional mTLS between peers.
 - **Web admin console** — dark-themed browser UI with dashboard, host inventory, per-host port detail, scan history, watchdog peer status; auto-starts alongside each agent.
@@ -450,6 +450,7 @@ Both agents expose two HTTP endpoints used by the watchdog and for external moni
 | `/export.csv` | GET | Full inventory snapshot as CSV |
 | `/api/v1/hosts` | GET | Filterable JSON list — `?vendor=`, `?device_type=`, `?hostname=`, `?subnet=`, `?port=`, `?limit=`, `?offset=` |
 | `/api/v1/hosts/{ip}` | GET | Single-host JSON with nested ports |
+| `/api/v1/scans` | GET | Paginated JSON scan history — `?subnet=`, `?limit=`, `?offset=` |
 | `/scan` | POST | Trigger an out-of-cycle scan (CSRF-gated) |
 
 ### `/status` response
