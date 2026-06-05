@@ -209,6 +209,60 @@ func TestVNCBanner_NotVNC(t *testing.T) {
 	}
 }
 
+func TestRDPProbe_Identified(t *testing.T) {
+	// Any TPKT-framed reply (first byte 0x03) is RDP.
+	addr := startRequestResponse(t, []byte{0x03, 0x00, 0x00, 0x13, 0xd0})
+	host, portStr, _ := net.SplitHostPort(addr)
+	if got := rdpProbe(context.Background(), host, atoi(t, portStr), 500*time.Millisecond); got != "RDP" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRDPProbe_NotRDP(t *testing.T) {
+	addr := startRequestResponse(t, []byte{0x16, 0x03, 0x01}) // looks like TLS, not TPKT
+	host, portStr, _ := net.SplitHostPort(addr)
+	if got := rdpProbe(context.Background(), host, atoi(t, portStr), 500*time.Millisecond); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestMSSQLPrelogin_Identified(t *testing.T) {
+	// TDS response packet type 0x04.
+	addr := startRequestResponse(t, []byte{0x04, 0x01, 0x00, 0x2b})
+	host, portStr, _ := net.SplitHostPort(addr)
+	if got := mssqlPrelogin(context.Background(), host, atoi(t, portStr), 500*time.Millisecond); got != "MSSQL" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestMSSQLPrelogin_NotMSSQL(t *testing.T) {
+	addr := startRequestResponse(t, []byte{0x00, 0x01})
+	host, portStr, _ := net.SplitHostPort(addr)
+	if got := mssqlPrelogin(context.Background(), host, atoi(t, portStr), 500*time.Millisecond); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+func TestMongoProbe_Identified(t *testing.T) {
+	// 16-byte reply header with opCode 1 (OP_REPLY) at offset 12.
+	resp := make([]byte, 36)
+	resp[12] = 0x01 // opcode 1, little-endian
+	addr := startRequestResponse(t, resp)
+	host, portStr, _ := net.SplitHostPort(addr)
+	if got := mongoProbe(context.Background(), host, atoi(t, portStr), 500*time.Millisecond); got != "MongoDB" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestMongoProbe_NotMongo(t *testing.T) {
+	resp := make([]byte, 16) // opcode 0 at offset 12
+	addr := startRequestResponse(t, resp)
+	host, portStr, _ := net.SplitHostPort(addr)
+	if got := mongoProbe(context.Background(), host, atoi(t, portStr), 500*time.Millisecond); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
 // --- helpers ---
 
 // startRequestResponse accepts one connection, consumes the client's

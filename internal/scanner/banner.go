@@ -278,6 +278,95 @@ func vncBanner(ctx context.Context, ip string, port int, timeout time.Duration) 
 	return "VNC: " + line
 }
 
+// rdpProbe identifies an RDP server. It sends a standard X.224 Connection
+// Request (TPKT-framed) and treats any TPKT-framed reply — first byte 0x03,
+// the TPKT version — as RDP. Microsoft RDP, xrdp and FreeRDP all answer this
+// way. Identification only; the version isn't exposed pre-auth.
+func rdpProbe(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	// TPKT(03 00, len 19) + X.224 Connection Request + RDP negotiation request.
+	cr := []byte{
+		0x03, 0x00, 0x00, 0x13,
+		0x0e, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+	}
+	resp, ok := tcpExchange(ctx, ip, port, timeout, cr, 64)
+	if !ok || len(resp) == 0 || resp[0] != 0x03 {
+		return ""
+	}
+	return "RDP"
+}
+
+// mssqlPrelogin identifies a Microsoft SQL Server. It sends a minimal TDS
+// PRELOGIN packet (type 0x12 with a single VERSION option) and treats a TDS
+// response packet (type 0x04) as MSSQL. Best-effort: a server that rejects
+// the minimal prelogin simply yields "" rather than a false positive.
+func mssqlPrelogin(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	pkt := []byte{
+		0x12, 0x01, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, // TDS header: PRELOGIN, EOM, len 20
+		0x00, 0x00, 0x06, 0x00, 0x06, 0xff, // VERSION option (offset 6, len 6) + TERMINATOR
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // VERSION data (6 bytes)
+	}
+	resp, ok := tcpExchange(ctx, ip, port, timeout, pkt, 64)
+	if !ok || len(resp) == 0 || resp[0] != 0x04 {
+		return ""
+	}
+	return "MSSQL"
+}
+
+// mongoProbe identifies a MongoDB server. It sends a legacy OP_QUERY for
+// {isMaster:1} against admin.$cmd (still accepted for the handshake) and
+// treats a reply whose wire-protocol opcode is OP_REPLY (1) or OP_MSG (2013)
+// as MongoDB. Identification only.
+func mongoProbe(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	q := []byte{
+		0x3a, 0x00, 0x00, 0x00, // messageLength = 58
+		0x01, 0x00, 0x00, 0x00, // requestID
+		0x00, 0x00, 0x00, 0x00, // responseTo
+		0xd4, 0x07, 0x00, 0x00, // opCode = 2004 (OP_QUERY)
+		0x00, 0x00, 0x00, 0x00, // flags
+		'a', 'd', 'm', 'i', 'n', '.', '$', 'c', 'm', 'd', 0x00, // fullCollectionName
+		0x00, 0x00, 0x00, 0x00, // numberToSkip
+		0x01, 0x00, 0x00, 0x00, // numberToReturn
+		// BSON {isMaster: 1}
+		0x13, 0x00, 0x00, 0x00,
+		0x10, 'i', 's', 'M', 'a', 's', 't', 'e', 'r', 0x00,
+		0x01, 0x00, 0x00, 0x00,
+		0x00,
+	}
+	resp, ok := tcpExchange(ctx, ip, port, timeout, q, 64)
+	if !ok || len(resp) < 16 {
+		return ""
+	}
+	opcode := uint32(resp[12]) | uint32(resp[13])<<8 | uint32(resp[14])<<16 | uint32(resp[15])<<24
+	if opcode != 1 && opcode != 2013 {
+		return ""
+	}
+	return "MongoDB"
+}
+
+// tcpExchange dials the TCP port, writes payload, and reads up to readCap
+// bytes of the reply. Returns (reply, true) on a non-empty read. Shared by
+// the request/response fingerprinters (RDP, MSSQL, MongoDB).
+func tcpExchange(ctx context.Context, ip string, port int, timeout time.Duration, payload []byte, readCap int) ([]byte, bool) {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if _, err := conn.Write(payload); err != nil {
+		return nil, false
+	}
+	buf := make([]byte, readCap)
+	n, _ := conn.Read(buf)
+	if n == 0 {
+		return nil, false
+	}
+	return buf[:n], true
+}
+
 // capReader wraps an io.Reader with a hard byte cap, defended against a
 // peer that sends data without an end-of-line for longer than we'd want
 // to wait. Used by lineBanner.

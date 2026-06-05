@@ -17,6 +17,40 @@ _No unreleased changes._
 
 ---
 
+## 26.31 — 2026-06-05
+
+RDP, MSSQL, and MongoDB fingerprinting — the last of the deep-probed ports
+(3389/1433/27017) that recorded as open but had no handler. Post-backlog
+feature work (no `Planning.md` number).
+
+### Added
+
+- **RDP** (`rdpProbe`) — X.224 Connection Request; a TPKT-framed reply →
+  `RDP`.
+- **MSSQL** (`mssqlPrelogin`) — minimal TDS PRELOGIN; a TDS response packet
+  (type 0x04) → `MSSQL`.
+- **MongoDB** (`mongoProbe`) — legacy OP_QUERY `isMaster`; an OP_REPLY /
+  OP_MSG opcode → `MongoDB`.
+- **`tcpExchange`** helper shared by the request/response fingerprinters.
+
+### Changed
+
+- **`fingerprint()` dispatches ports 3389/1433/27017** to the new handlers.
+
+### Tests
+
+- `internal/scanner/banner_test.go` — each protocol's response signature is
+  identified and a non-matching reply yields "".
+
+### Notes
+
+- These are identification probes (no version pre-auth). They detect by
+  response signature, so a server that doesn't answer the minimal request
+  degrades to an empty Service rather than a false positive.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.30 — 2026-06-05
 
 VNC fingerprinting. Port 5900 was in the deep-probe list but had no handler,
