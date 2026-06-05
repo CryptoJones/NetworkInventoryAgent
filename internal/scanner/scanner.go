@@ -560,6 +560,12 @@ func fingerprint(ctx context.Context, ip string, port int, timeout time.Duration
 		return memcachedVersion(ctx, ip, port, timeout)
 	case 5900:
 		return vncBanner(ctx, ip, port, timeout)
+	case 3389:
+		return rdpProbe(ctx, ip, port, timeout)
+	case 1433:
+		return mssqlPrelogin(ctx, ip, port, timeout)
+	case 27017:
+		return mongoProbe(ctx, ip, port, timeout)
 	default:
 		return ""
 	}

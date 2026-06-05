@@ -17,6 +17,111 @@ _No unreleased changes._
 
 ---
 
+## 26.33 — 2026-06-05
+
+Store-level pagination. The 26.25 admin pagination bounded the *rendered*
+page but still loaded the whole table into memory via `List`. The host and
+scan list pages now page at the database with `LIMIT`/`OFFSET`, so memory
+stays bounded on large deployments. Post-backlog reliability work (no
+`Planning.md` number).
+
+### Added
+
+- **`HostStore.ListPage` / `ScanStore.ListPage`** (+ `ScanStore.Count`) on
+  the store interface, with SQLite implementations (`LIMIT ? OFFSET ?`,
+  `limit <= 0` = no limit). `HostStore.Count` already existed.
+
+### Changed
+
+- **Admin `/hosts` and `/scans` handlers** now call `Count` + `ListPage`
+  instead of `List` + in-memory slicing; the unused `pageSlice` helper was
+  removed. The `?limit=`/`?offset=` contract and the pager UI are unchanged.
+
+### Tests
+
+- `internal/sqlite/host_test.go` / `scan_test.go` — `ListPage` windowing
+  (ordering, page boundaries, no-limit) and `Count`. Store mocks gained the
+  new methods.
+
+### Notes
+
+- The filterable `/api/v1/hosts` endpoint still lists-then-filters in memory
+  (its vendor/device/port filters don't map to a single SQL window); pushing
+  those into SQL is a separate, larger change.
+- `go test ./...`, `go vet ./...`, `golangci-lint run ./...` green;
+  darwin/linux/windows build.
+
+---
+
+## 26.32 — 2026-06-05
+
+Windows MAC/vendor enrichment. ARP enrichment now covers all three major
+platforms; Windows previously left `MACAddress`/`Vendor` empty. Like the
+macOS path it invokes **no shell** — it calls `GetIpNetTable` from
+`iphlpapi.dll` directly. Post-backlog feature work (no `Planning.md` number).
+
+### Added
+
+- **Windows neighbour resolution** (`arp_windows.go`) — `GetIpNetTable` via
+  `golang.org/x/sys/windows`, parsing the `MIB_IPNETTABLE` rows for the
+  target IP's 6-byte MAC.
+- **`golang.org/x/sys`** promoted from indirect to direct dependency
+  (already in the module graph; pure Go).
+
+### Changed
+
+- **`arp_fallback.go` build tag** narrowed to `!darwin && !windows`; Windows
+  now has a native lookup rather than the no-op.
+
+### Tests
+
+- `internal/scanner/arp_windows_test.go` — the table parser
+  (`parseIPNetTable`) is unit-tested with a synthetic `MIB_IPNETTABLE`
+  (match, zero MAC, wrong length, absent IP, truncated buffer).
+
+### Notes
+
+- The syscall path is compile- and vet-verified for windows/amd64 and
+  windows/arm64 but not runtime-tested on this build host; it degrades
+  safely to "" on any error. Linux and macOS paths are unchanged.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.31 — 2026-06-05
+
+RDP, MSSQL, and MongoDB fingerprinting — the last of the deep-probed ports
+(3389/1433/27017) that recorded as open but had no handler. Post-backlog
+feature work (no `Planning.md` number).
+
+### Added
+
+- **RDP** (`rdpProbe`) — X.224 Connection Request; a TPKT-framed reply →
+  `RDP`.
+- **MSSQL** (`mssqlPrelogin`) — minimal TDS PRELOGIN; a TDS response packet
+  (type 0x04) → `MSSQL`.
+- **MongoDB** (`mongoProbe`) — legacy OP_QUERY `isMaster`; an OP_REPLY /
+  OP_MSG opcode → `MongoDB`.
+- **`tcpExchange`** helper shared by the request/response fingerprinters.
+
+### Changed
+
+- **`fingerprint()` dispatches ports 3389/1433/27017** to the new handlers.
+
+### Tests
+
+- `internal/scanner/banner_test.go` — each protocol's response signature is
+  identified and a non-matching reply yields "".
+
+### Notes
+
+- These are identification probes (no version pre-auth). They detect by
+  response signature, so a server that doesn't answer the minimal request
+  degrades to an empty Service rather than a false positive.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.30 — 2026-06-05
 
 VNC fingerprinting. Port 5900 was in the deep-probe list but had no handler,

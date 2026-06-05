@@ -41,6 +41,28 @@ func (m *mockHostStore) List(_ context.Context) ([]*models.Host, error) {
 	return m.hosts, m.err
 }
 
+func (m *mockHostStore) ListPage(_ context.Context, limit, offset int) ([]*models.Host, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return windowSlice(m.hosts, limit, offset), m.err
+}
+
+// windowSlice returns the [offset, offset+limit) window of s (limit<=0 means
+// no limit), mirroring the SQL LIMIT/OFFSET the real store applies.
+func windowSlice[T any](s []T, limit, offset int) []T {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(s) {
+		return nil
+	}
+	end := len(s)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return s[offset:end]
+}
+
 func (m *mockHostStore) GetByIP(_ context.Context, ip string) (*models.Host, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -127,6 +149,18 @@ func (m *mockScanStore) List(_ context.Context) ([]*models.Scan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.scans, m.err
+}
+
+func (m *mockScanStore) ListPage(_ context.Context, limit, offset int) ([]*models.Scan, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return windowSlice(m.scans, limit, offset), m.err
+}
+
+func (m *mockScanStore) Count(_ context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.scans), m.err
 }
 
 func (m *mockScanStore) DeleteBefore(_ context.Context, cutoff time.Time) (int64, error) {

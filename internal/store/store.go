@@ -23,6 +23,11 @@ type HostStore interface {
 	// List returns all hosts ordered by IP address.
 	List(ctx context.Context) ([]*models.Host, error)
 
+	// ListPage returns a window of hosts ordered by IP address, bounding the
+	// rows loaded into memory. A non-positive limit means "no limit" (all
+	// rows from offset onward); offset is clamped at zero.
+	ListPage(ctx context.Context, limit, offset int) ([]*models.Host, error)
+
 	// Count returns the total number of hosts in the inventory.
 	Count(ctx context.Context) (int, error)
 
@@ -55,6 +60,14 @@ type ScanStore interface {
 
 	// List returns all scans ordered by started_at descending (newest first).
 	List(ctx context.Context) ([]*models.Scan, error)
+
+	// ListPage returns a window of scans ordered newest-first, bounding the
+	// rows loaded into memory. A non-positive limit means "no limit"; offset
+	// is clamped at zero.
+	ListPage(ctx context.Context, limit, offset int) ([]*models.Scan, error)
+
+	// Count returns the total number of scan records.
+	Count(ctx context.Context) (int, error)
 
 	// DeleteBefore removes scan records whose started_at is strictly older
 	// than cutoff and returns the number deleted. Used by the scan-history
