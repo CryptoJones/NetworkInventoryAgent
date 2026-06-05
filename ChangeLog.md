@@ -17,6 +17,31 @@ _No unreleased changes._
 
 ---
 
+## 26.27 — 2026-06-05
+
+Scanner config-honesty fixes. Two small consistency gaps. Post-backlog
+polish (no `Planning.md` number).
+
+### Changed
+
+- **Reverse-DNS now honours the configured per-host timeout** instead of a
+  hardcoded 500ms. Aggressive or relaxed `scanner.timeout` / per-profile
+  `timeout` values now apply to PTR lookups too (falls back to 500ms only
+  when unset).
+
+### Added
+
+- **`inventory_udp_probe_failure_total`** metric, incremented on a
+  definitive closed (ICMP port-unreachable) UDP result — the counterpart to
+  the existing success counter. Ambiguous no-reply probes are still not
+  counted (they're genuinely unknown, not failures).
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.26 — 2026-06-05
 
 OUI table expansion for camera / NAS / IoT vendors, wired into the

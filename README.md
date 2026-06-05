@@ -337,7 +337,7 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `scanner.subnets` | `[]` | Legacy flat CIDR list. Mutually exclusive with `scanner.profiles`. |
 | `scanner.profiles` | `[]` | Per-subnet override list (see below). |
 | `scanner.scan_interval` | `5m` | How often to re-scan; default for any profile that doesn't set its own. |
-| `scanner.timeout` | `2s` | Per-host TCP probe timeout. |
+| `scanner.timeout` | `2s` | Per-host TCP probe timeout; also bounds reverse-DNS (PTR) lookups. |
 | `scanner.workers` | `50` | GLOBAL concurrent probe cap across every subnet (not per-subnet). |
 | `scanner.max_hosts` | `65535` | Maximum usable addresses per subnet; larger subnets are rejected. |
 | `scanner.probe_ports` | `[22, 80, 443, 8080]` | TCP liveness ports — host alive if any answer. |
