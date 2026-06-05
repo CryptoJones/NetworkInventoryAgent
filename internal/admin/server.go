@@ -30,6 +30,16 @@ var templateFS embed.FS
 // already pending. Pass a nil Trigger to omit the endpoint.
 type Trigger func() bool
 
+// ServerOptions carries the optional configuration for NewServer. The zero
+// value produces the loopback-friendly default: no auth, so a browser or curl
+// reaches the console without credentials.
+type ServerOptions struct {
+	// AuthToken, when non-empty, gates every route. Clients present it as
+	// `Authorization: Bearer <token>` or via HTTP Basic auth using the token
+	// as the password (any username). Mismatches return 401 in constant time.
+	AuthToken string
+}
+
 // Server is the admin web console HTTP server.
 type Server struct {
 	agentName string
@@ -39,6 +49,7 @@ type Server struct {
 	status    func() health.Status
 	trigger   Trigger
 	csrfToken string
+	authToken string
 	srv       *http.Server
 	tmpl      *template.Template
 }
@@ -54,6 +65,7 @@ func NewServer(
 	scans store.ScanStore,
 	status func() health.Status,
 	trigger Trigger,
+	opts ServerOptions,
 ) (*Server, error) {
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -73,6 +85,7 @@ func NewServer(
 		status:    status,
 		trigger:   trigger,
 		csrfToken: csrf,
+		authToken: opts.AuthToken,
 		tmpl:      tmpl,
 	}
 
@@ -90,6 +103,7 @@ func NewServer(
 	// future v2 changes can land alongside without breaking consumers.
 	mux.HandleFunc("GET /api/v1/hosts", s.handleAPIHosts)
 	mux.HandleFunc("GET /api/v1/hosts/{ip}", s.handleAPIHostDetail)
+	mux.HandleFunc("GET /api/v1/scans", s.handleAPIScans)
 
 	s.srv = &http.Server{
 		Addr:              addr,

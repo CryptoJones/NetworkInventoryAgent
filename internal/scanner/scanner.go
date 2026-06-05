@@ -241,7 +241,7 @@ func (s *Scanner) Scan(ctx context.Context, subnet string, opts SubnetOptions) (
 			metrics.ProbeSuccessTotal.Inc()
 			host := &models.Host{
 				IPAddress: addr,
-				Hostname:  reverseDNS(ctx, addr),
+				Hostname:  reverseDNS(ctx, addr, eo.timeout),
 				FirstSeen: startedAt,
 				LastSeen:  startedAt,
 			}
@@ -449,15 +449,22 @@ func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.
 			if !ok {
 				return
 			}
-			// UDP banner-grabs are protocol-specific (DNS query
-			// for 53, SNMP get for 161, …). Out of scope here;
-			// Service stays empty for UDP for now.
-			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, "", ts)
+			// Protocol-specific fingerprint for well-known UDP ports
+			// (DNS/NTP today); other ports record an empty Service.
+			service := ""
+			if state == models.StateOpen {
+				service = udpFingerprint(ctx, ip, port, timeout)
+			}
+			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, service, ts)
 			if state == models.StateOpen {
 				metrics.UDPProbeSuccessTotal.Inc()
 				mu.Lock()
 				out = append(out, port)
 				mu.Unlock()
+			} else {
+				// Definitive closed (ICMP port-unreachable); ambiguous
+				// no-reply probes never reach here (probeUDP returns ok=false).
+				metrics.UDPProbeFailureTotal.Inc()
 			}
 		}(port)
 	}
@@ -495,11 +502,15 @@ func probeUDP(ctx context.Context, ip string, port int, timeout time.Duration) (
 	return "", false
 }
 
-// reverseDNS does a best-effort PTR lookup with a tight timeout. Returns an
-// empty string if anything fails — Hostname stays absent in the inventory
-// rather than being populated with a misleading value.
-func reverseDNS(ctx context.Context, ip string) string {
-	rctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+// reverseDNS does a best-effort PTR lookup bounded by the caller's per-host
+// timeout (the configured dial budget), falling back to 500ms when unset.
+// Returns an empty string if anything fails — Hostname stays absent in the
+// inventory rather than being populated with a misleading value.
+func reverseDNS(ctx context.Context, ip string, timeout time.Duration) string {
+	if timeout <= 0 {
+		timeout = 500 * time.Millisecond
+	}
+	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	names, err := net.DefaultResolver.LookupAddr(rctx, ip)
 	if err != nil || len(names) == 0 {
@@ -541,6 +552,14 @@ func fingerprint(ctx context.Context, ip string, port int, timeout time.Duration
 		return tlsHTTPSFingerprint(ctx, ip, port, timeout)
 	case 3306:
 		return mysqlGreeting(ctx, ip, port, timeout)
+	case 5432:
+		return postgresProbe(ctx, ip, port, timeout)
+	case 6379:
+		return redisInfo(ctx, ip, port, timeout)
+	case 11211:
+		return memcachedVersion(ctx, ip, port, timeout)
+	case 5900:
+		return vncBanner(ctx, ip, port, timeout)
 	default:
 		return ""
 	}

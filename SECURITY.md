@@ -43,16 +43,16 @@ The following table documents the project's posture against the [OWASP Top 10 (2
 
 | # | Category | Status | Notes |
 |---|----------|--------|-------|
-| A01 | Broken Access Control | ⚠️ Partial | `/health` and `/status` are intentionally unauthenticated for simplicity. The default bind address is `127.0.0.1` (loopback only). Operators who expose these endpoints on a wider interface accept responsibility for network-level access control. |
+| A01 | Broken Access Control | ⚠️ Partial | `/health` and `/status` are unauthenticated on the loopback default but require `health.auth_token` when bound off-loopback (enforced at startup). The admin console (full inventory, exports, JSON API, `POST /scan`) likewise requires `admin.auth_token` when bound off-loopback — the agent refuses to start otherwise. Both default to `127.0.0.1` (loopback only). |
 | A02 | Cryptographic Failures | ✅ Pass | Peer-to-peer watchdog traffic supports TLS (with optional mTLS) — set `watchdog.tls.ca_cert_path` and `health.tls_cert_path`/`tls_key_path` in the configs. TLS 1.2+ enforced. Database is stored unencrypted; operators should apply filesystem-level encryption where needed. |
 | A03 | Injection | ✅ Pass | All SQL queries use parameterized `?` placeholders. No shell commands are invoked; the scanner uses `net.Dialer` directly. |
 | A04 | Insecure Design | ✅ Pass | Health server binds to loopback by default. `peer_addr` is validated to `http`/`https` schemes only, preventing SSRF via alternate URI schemes. No user-controlled input reaches internal APIs without validation. |
 | A05 | Security Misconfiguration | ✅ Pass | Default `health.addr` is `127.0.0.1:8080` (loopback only). HTTP server has explicit read, write, and idle timeouts. Response bodies from peers are capped at 1 MiB. |
 | A06 | Vulnerable Components | ✅ Pass | All dependencies are pure Go (no C libraries). `go.sum` is committed and verified on every build. `govulncheck` is required before dependency PRs (see CONTRIBUTING.md). |
-| A07 | Auth Failures | ⚠️ Partial | No authentication on health endpoints by design. Mitigated by loopback-only default and operator guidance in this document. |
+| A07 | Auth Failures | ⚠️ Partial | Loopback-only defaults are unauthenticated by design. Off-loopback binds of both the health server and the admin console require a shared bearer/Basic token, enforced at startup; tokens are compared in constant time. |
 | A08 | Data Integrity | ✅ Pass | `go.sum` provides cryptographic verification of all module downloads. Config validation rejects malformed or unexpected values at startup. |
 | A09 | Logging & Monitoring | ✅ Pass | Structured `log/slog` output in text or JSON format. All three watchdog failure conditions (liveness, freshness, consistency) are logged at `WARN` or `ERROR` level with structured fields. |
-| A10 | SSRF | ✅ Pass | `peer_addr` is validated to `http`/`https` only at config load time. Response bodies from external HTTP calls are limited to 1 MiB via `io.LimitReader`. Scanner targets come from operator-controlled config, not external input. |
+| A10 | SSRF | ✅ Pass | All outbound targets are scheme-validated at config load: `watchdog.peer_addr` and `alerts.webhook.url` to `http`/`https`, `alerts.syslog.addr` to `udp`/`tcp`. This blocks scheme-confusion vectors (`file://`, `gopher://`, …) before the URL reaches a client. Response bodies from external HTTP calls are limited to 1 MiB via `io.LimitReader`. Scanner targets come from operator-controlled config, not external input. |
 
 ## OWASP AI Top 10
 
@@ -62,7 +62,9 @@ The OWASP AI Top 10 is **not applicable** to this project. NetworkInventoryAgent
 
 NetworkInventoryAgent is designed to run on a trusted internal network. Before deploying, consider the following:
 
-**Health endpoints are unauthenticated.** The `/health` and `/status` endpoints expose agent name, scan counts, host counts, and timestamps to anyone who can reach the listening address. The default bind address is `127.0.0.1` (loopback only). Do not change this to `0.0.0.0` unless the network segment is trusted or access is controlled at the firewall.
+**Health endpoints are unauthenticated.** The `/health` and `/status` endpoints expose agent name, scan counts, host counts, and timestamps to anyone who can reach the listening address. The default bind address is `127.0.0.1` (loopback only). Binding off-loopback requires `health.auth_token` (or `INVENTORY_AUTH_TOKEN`); the agent refuses to start without it.
+
+**The admin console is gated off-loopback.** The console at `admin.addr` (default `127.0.0.1:9090`) serves the full host/port inventory, `/export.json|csv`, the `/api/v1/*` query API, and the `POST /scan` trigger. On the loopback default it is unauthenticated for convenience; binding it off-loopback (e.g. `0.0.0.0` for Docker, or via `INVENTORY_ADMIN_ADDR`) requires `admin.auth_token` (or `INVENTORY_ADMIN_TOKEN`) and the agent refuses to start without it. Clients authenticate with `Authorization: Bearer <token>` or HTTP Basic auth using the token as the password.
 
 **Peer communication can use TLS.** Watchdog checks between Wintermute and Neuromancer default to plain HTTP for the loopback case. For off-loopback deployments, switch `watchdog.peer_addr` to `https://…`, set `watchdog.tls.ca_cert_path` to the CA that signs the peer's cert, and set `health.tls_cert_path` / `health.tls_key_path` on the peer. For full mutual auth, set `health.client_ca_path` on both sides and `watchdog.tls.client_cert_path` / `client_key_path` on the dialer side. Bearer tokens stack on top of TLS.
 

@@ -125,6 +125,12 @@ type ScannerConfig struct {
 	// stale. Zero disables pruning. Pruning runs at the end of each scan
 	// cycle and DELETEs rows where last_seen < now - HostTTL*ScanInterval.
 	HostTTL Duration `json:"host_ttl,omitempty"`
+	// ScanHistoryTTL bounds how long completed scan records are retained.
+	// Zero (the default) keeps history forever. When set, the end of each
+	// cycle DELETEs scan rows whose started_at is older than now -
+	// ScanHistoryTTL, so the scans table and the /scans view stay bounded
+	// on long-running deployments.
+	ScanHistoryTTL Duration `json:"scan_history_ttl,omitempty"`
 	// DeepProbe enables a second-pass scan of DeepProbePorts on every host
 	// confirmed alive by the liveness probe. Disabled by default — operators
 	// must opt in because the worst case wall-clock budget per host grows
@@ -308,9 +314,17 @@ type HealthConfig struct {
 
 type AdminConfig struct {
 	// Addr is the address the admin web console listens on.
-	// Default is 127.0.0.1:9090 (loopback only). Bind to 0.0.0.0 only in
-	// trusted network environments, as the console is unauthenticated (OWASP A01/A05).
+	// Default is 127.0.0.1:9090 (loopback only). When bound off-loopback the
+	// agent refuses to start unless AuthToken is also set, because the console
+	// exposes the full inventory, exports, the JSON API, and POST /scan
+	// (OWASP A01/A05).
 	Addr string `json:"addr"`
+	// AuthToken is the shared secret required to reach the admin console when
+	// Addr is not a loopback bind. Clients authenticate with either
+	// `Authorization: Bearer <token>` (curl/API) or HTTP Basic auth using the
+	// token as the password (so browsers get a native login prompt). Leave
+	// empty (and the file chmod 600) for the loopback-only default deployment.
+	AuthToken string `json:"auth_token,omitempty"`
 }
 
 type WatchdogConfig struct {
@@ -429,7 +443,7 @@ func Load(path string) (*Config, error) {
 // token is readable by group or other. The SECURITY.md advice is chmod 600;
 // catching this at startup beats discovering it after a token leak.
 func (c *Config) checkSecretsPerm(path string, mode os.FileMode) error {
-	hasSecret := c.Health.AuthToken != "" || c.Watchdog.PeerToken != ""
+	hasSecret := c.Health.AuthToken != "" || c.Watchdog.PeerToken != "" || c.Admin.AuthToken != ""
 	if !hasSecret {
 		return nil
 	}
@@ -458,6 +472,19 @@ func (c *Config) validate() error {
 	}
 	if !isLoopbackBind(c.Health.Addr) && c.Health.AuthToken == "" {
 		return fmt.Errorf("health.addr %q is not loopback; set health.auth_token to gate /health and /status (the endpoints expose host counts; binding off-loopback without a token is OWASP A01/A05)", c.Health.Addr)
+	}
+	if !isLoopbackBind(c.Admin.Addr) && c.Admin.AuthToken == "" {
+		return fmt.Errorf("admin.addr %q is not loopback; set admin.auth_token (or INVENTORY_ADMIN_TOKEN) to gate the console, exports, JSON API, and POST /scan (binding off-loopback without a token is OWASP A01/A05)", c.Admin.Addr)
+	}
+	if c.Alerts.Webhook.URL != "" {
+		if err := validateSinkURL(c.Alerts.Webhook.URL, "http", "https"); err != nil {
+			return fmt.Errorf("alerts.webhook.url: %w", err)
+		}
+	}
+	if c.Alerts.Syslog.Addr != "" {
+		if err := validateSinkURL(c.Alerts.Syslog.Addr, "udp", "tcp"); err != nil {
+			return fmt.Errorf("alerts.syslog.addr: %w", err)
+		}
 	}
 	return nil
 }
@@ -499,6 +526,29 @@ func validatePeerAddr(raw string) error {
 	return nil
 }
 
+// validateSinkURL rejects alert-sink targets (webhook.url, syslog.addr) whose
+// scheme is not in the allowed set, or that carry no host. This is the same
+// scheme-confusion guard applied to watchdog.peer_addr (OWASP A10): without it
+// a webhook URL like file:///etc/passwd or gopher://… reaches the HTTP client
+// verbatim. It does not block private/internal hosts — internal receivers
+// (an in-cluster collector, localhost) are a legitimate, common deployment.
+func validateSinkURL(raw string, schemes ...string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", raw, err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	for _, allowed := range schemes {
+		if scheme == allowed {
+			if u.Host == "" {
+				return fmt.Errorf("missing host in %q", raw)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("scheme %q not allowed; must be one of %v", scheme, schemes)
+}
+
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("INVENTORY_DB_PATH"); v != "" {
 		cfg.Database.Path = v
@@ -517,6 +567,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("INVENTORY_PEER_TOKEN"); v != "" {
 		cfg.Watchdog.PeerToken = v
+	}
+	if v := os.Getenv("INVENTORY_ADMIN_TOKEN"); v != "" {
+		cfg.Admin.AuthToken = v
 	}
 	// Listener addresses also come from env so containerised deployments
 	// can repoint without rewriting the JSON file (e.g.

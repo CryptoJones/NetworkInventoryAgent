@@ -3,6 +3,7 @@ package config_test
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -67,8 +68,10 @@ func TestLoad_ValidFile(t *testing.T) {
 
 func TestLoad_AdminConfig(t *testing.T) {
 	data := map[string]any{
-		"log":   map[string]any{"level": "info", "format": "text"},
-		"admin": map[string]any{"addr": "0.0.0.0:9090"},
+		"log": map[string]any{"level": "info", "format": "text"},
+		// An off-loopback bind now requires a token (see the off-loopback
+		// validation tests below); include one so this parse check passes.
+		"admin": map[string]any{"addr": "0.0.0.0:9090", "auth_token": "tok"},
 	}
 	cfg, err := config.Load(writeTempConfig(t, data))
 	require.NoError(t, err)
@@ -195,6 +198,114 @@ func TestLoad_InvalidPeerAddr_NoHost(t *testing.T) {
 	_, err := config.Load(writeTempConfig(t, data))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "peer_addr")
+}
+
+func TestLoad_AdminOffLoopbackWithoutToken_Error(t *testing.T) {
+	data := map[string]any{
+		"log":   map[string]any{"level": "info", "format": "text"},
+		"admin": map[string]any{"addr": "0.0.0.0:9090"},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "admin.addr")
+}
+
+func TestLoad_AdminOffLoopbackWithToken_OK(t *testing.T) {
+	data := map[string]any{
+		"log":   map[string]any{"level": "info", "format": "text"},
+		"admin": map[string]any{"addr": "0.0.0.0:9090", "auth_token": "tok"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "tok", cfg.Admin.AuthToken)
+}
+
+func TestLoad_AdminToken_EnvOverride(t *testing.T) {
+	t.Setenv("INVENTORY_ADMIN_ADDR", "0.0.0.0:9090")
+	t.Setenv("INVENTORY_ADMIN_TOKEN", "env-tok")
+
+	cfg, err := config.Load("/nonexistent/config.json")
+	require.NoError(t, err, "off-loopback admin bind is satisfied by the env token")
+	assert.Equal(t, "env-tok", cfg.Admin.AuthToken)
+}
+
+func TestLoad_AdminTokenWorldReadable_Error(t *testing.T) {
+	b, err := json.Marshal(map[string]any{
+		"log":   map[string]any{"level": "info", "format": "text"},
+		"admin": map[string]any{"addr": "127.0.0.1:9090", "auth_token": "tok"},
+	})
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(path, b, 0o644))
+
+	_, err = config.Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "chmod 600")
+}
+
+func TestLoad_ScanHistoryTTL(t *testing.T) {
+	data := map[string]any{
+		"log":     map[string]any{"level": "info", "format": "text"},
+		"scanner": map[string]any{"scan_history_ttl": "168h"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, 168*time.Hour, cfg.Scanner.ScanHistoryTTL.Duration)
+}
+
+func TestDefault_ScanHistoryTTL_DisabledByDefault(t *testing.T) {
+	cfg := config.Default()
+	assert.Equal(t, time.Duration(0), cfg.Scanner.ScanHistoryTTL.Duration, "retention off by default")
+}
+
+func TestLoad_WebhookURL_BadScheme(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"webhook": map[string]any{"url": "file:///etc/passwd"}},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "alerts.webhook.url")
+}
+
+func TestLoad_WebhookURL_NoHost(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"webhook": map[string]any{"url": "https://"}},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "alerts.webhook.url")
+}
+
+func TestLoad_WebhookURL_Valid(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"webhook": map[string]any{"url": "https://hook.example.com/events"}},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "https://hook.example.com/events", cfg.Alerts.Webhook.URL)
+}
+
+func TestLoad_SyslogAddr_BadScheme(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"syslog": map[string]any{"addr": "http://syslog.example:514"}},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "alerts.syslog.addr")
+}
+
+func TestLoad_SyslogAddr_Valid(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"syslog": map[string]any{"addr": "udp://syslog.example:514"}},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "udp://syslog.example:514", cfg.Alerts.Syslog.Addr)
 }
 
 func TestDuration_UnmarshalJSON_String(t *testing.T) {

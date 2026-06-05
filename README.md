@@ -11,12 +11,12 @@ The system is designed to run as **two cooperating agent instances** — named *
 ## Features
 
 - **Active discovery** — concurrent TCP-probe scanning across configurable CIDR ranges to find live hosts. Optional deep TCP and UDP probe passes per profile.
-- **Asset fingerprinting** — banner-grab on SSH, FTP, SMTP, POP3, IMAP, HTTP, HTTPS (with TLS cert peek), MySQL handshake, Telnet. Stored per-port in `Port.Service`.
-- **Device-type classifier** — heuristic rules over (vendor, OS banner, open ports) tag hosts as printer / router / hypervisor / windows-host / windows-dc / database (mysql|postgres|…) / mail-server / linux-host / appliance / iot-broker / embedded.
-- **MAC + vendor enrichment** — `/proc/net/arp` lookup on Linux + embedded OUI prefix table for ~80 common vendors.
+- **Asset fingerprinting** — banner-grab on SSH, FTP, SMTP, POP3, IMAP, HTTP, HTTPS (with TLS cert peek), MySQL handshake, PostgreSQL (SSLRequest probe), Redis (`INFO`), Memcached (`version`), VNC (RFB greeting), Telnet, plus UDP DNS and NTP (stratum) probes. Stored per-port in `Port.Service`.
+- **Device-type classifier** — heuristic rules over (vendor, OS banner, open ports) tag hosts as printer / router / hypervisor / windows-host / windows-server / windows-dc / nas / database (mysql|postgres|…) / mail-server / dns-server / kubernetes-node / container-host / camera / linux-host / appliance / iot-broker / embedded.
+- **MAC + vendor enrichment** — neighbour-cache lookup on Linux (`/proc/net/arp`) and macOS (routing socket, no shell) + embedded OUI prefix table for ~90 common vendors, including major IP-camera (Hikvision/Dahua/Axis), NAS (Synology/QNAP/WD), networking (Ubiquiti), and IoT (Espressif) brands that also drive device classification.
 - **Per-subnet scan profiles** — aggressive hourly deep scans on critical infra, lazy daily liveness on guest networks, all in one config.
 - **Change detection + alerts** — diffs host inventory each cycle; fires `host.discovered` / `host.vanished` events to HTTP webhook and/or RFC 5424 syslog.
-- **JSON query API** — `/api/v1/hosts` with filters (vendor, device type, hostname, subnet, port) and pagination; `/api/v1/hosts/{ip}` with nested ports.
+- **JSON query API** — `/api/v1/hosts` with filters (vendor, device type, hostname, subnet, port) and pagination; `/api/v1/hosts/{ip}` with nested ports; `/api/v1/scans` paginated scan history (optional `subnet` filter).
 - **Continuous monitoring** — periodic re-scans detect new devices, removed devices, and configuration changes over time.
 - **Mutual watchdog** — two agent instances cross-check each other for liveness, scan freshness, and inventory consistency. Optional mTLS between peers.
 - **Web admin console** — dark-themed browser UI with dashboard, host inventory, per-host port detail, scan history, watchdog peer status; auto-starts alongside each agent.
@@ -241,9 +241,9 @@ Each agent automatically starts a browser-based admin console alongside the scan
 | Page | URL | Description |
 |------|-----|-------------|
 | Dashboard | `/` | Summary cards and latest 10 scans and hosts; auto-refreshes every 30 s |
-| Host inventory | `/hosts` | Full list of all discovered hosts with metadata |
+| Host inventory | `/hosts` | List of discovered hosts with metadata; paginated (`?limit=`, `?offset=`, default 100) |
 | Host detail | `/hosts/{ip}` | Per-host metadata and open port table |
-| Scan history | `/scans` | All subnet sweeps with duration and status |
+| Scan history | `/scans` | Subnet sweeps with duration and status; paginated (`?limit=`, `?offset=`, default 100) |
 
 ### Terminal UI console
 
@@ -337,15 +337,16 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `scanner.subnets` | `[]` | Legacy flat CIDR list. Mutually exclusive with `scanner.profiles`. |
 | `scanner.profiles` | `[]` | Per-subnet override list (see below). |
 | `scanner.scan_interval` | `5m` | How often to re-scan; default for any profile that doesn't set its own. |
-| `scanner.timeout` | `2s` | Per-host TCP probe timeout. |
+| `scanner.timeout` | `2s` | Per-host TCP probe timeout; also bounds reverse-DNS (PTR) lookups. |
 | `scanner.workers` | `50` | GLOBAL concurrent probe cap across every subnet (not per-subnet). |
 | `scanner.max_hosts` | `65535` | Maximum usable addresses per subnet; larger subnets are rejected. |
 | `scanner.probe_ports` | `[22, 80, 443, 8080]` | TCP liveness ports — host alive if any answer. |
 | `scanner.deep_probe` | `false` | Second-pass scan of `deep_probe_ports` on every live host. |
 | `scanner.deep_probe_ports` | `top-services list` | TCP ports for the deep pass when `deep_probe` is on. |
 | `scanner.udp_ports` | `[]` | UDP ports to probe per live host. Empty disables UDP probing. |
-| `scanner.enrich_arp` | `false` | Populate Host.MACAddress + Vendor from `/proc/net/arp` (Linux). |
+| `scanner.enrich_arp` | `false` | Populate Host.MACAddress + Vendor from the OS neighbour cache (Linux `/proc/net/arp`, macOS routing socket). No-op on other platforms. |
 | `scanner.host_ttl` | `0` (disabled) | Hosts not seen within this duration are deleted at the end of each cycle. |
+| `scanner.scan_history_ttl` | `0` (disabled) | Scan-history rows older than this duration are deleted at the end of each cycle, bounding the `scans` table and `/scans` view. |
 | **Scanner — per-subnet profile (each item in `scanner.profiles`)** | | |
 | `subnet` | required | CIDR for this profile. Must be unique. |
 | `scan_interval` | inherits global | Per-profile scan cadence. |
@@ -366,6 +367,7 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `health.client_ca_path` | — | When set, requires mTLS (clients must present a cert signed by this CA). |
 | **Admin console** | | |
 | `admin.addr` | `127.0.0.1:9090` | Listen address for the admin console + `/api/v1/*`. |
+| `admin.auth_token` | — | Shared secret gating the whole console. Required when `admin.addr` is off-loopback. Clients send `Authorization: Bearer <token>` or HTTP Basic with the token as the password. |
 | **Watchdog** | | |
 | `watchdog.peer_addr` | — | Base URL of the partner agent's health server. |
 | `watchdog.peer_token` | — | Bearer token sent to the peer. Must match peer's `health.auth_token`. |
@@ -379,9 +381,9 @@ Each agent reads a JSON config file and then applies environment variable overri
 | **Tracing** | | |
 | `tracing.endpoint` | — | OTLP/HTTP collector URL. Empty = no-op exporter (instrumentation active, spans discarded). |
 | **Alerts** | | |
-| `alerts.webhook.url` | — | HTTP POST target for host.discovered / host.vanished events. |
+| `alerts.webhook.url` | — | HTTP POST target for host.discovered / host.vanished events. Must be `http`/`https`; scheme-validated at startup. |
 | `alerts.webhook.auth_header` | — | Verbatim `Authorization` header (e.g. `Bearer abc123`). |
-| `alerts.syslog.addr` | — | `udp://host:514` or `tcp://host:514`. RFC 5424. |
+| `alerts.syslog.addr` | — | `udp://host:514` or `tcp://host:514`. RFC 5424. Scheme-validated at startup. |
 | `alerts.syslog.tag` | `network-inventory` | APP-NAME field. |
 | `alerts.syslog.facility` | `16` (local0) | RFC 5424 facility number 0..23. |
 
@@ -421,6 +423,7 @@ fails fast if both are set.
 | `INVENTORY_ADMIN_ADDR` | `admin.addr` |
 | `INVENTORY_AUTH_TOKEN` | `health.auth_token` |
 | `INVENTORY_PEER_TOKEN` | `watchdog.peer_token` |
+| `INVENTORY_ADMIN_TOKEN` | `admin.auth_token` |
 
 ## Health endpoints
 
@@ -434,19 +437,20 @@ Both agents expose two HTTP endpoints used by the watchdog and for external moni
 | `/status` | GET | JSON-encoded status snapshot (see below) |
 | `/metrics` | GET | Prometheus text exposition format — counters for scans, probes, DB, watchdog, alerts; gauges for host count + peer-up state |
 
-**Admin console** (default `127.0.0.1:9090`, unauthenticated — keep loopback unless on a trusted segment):
+**Admin console** (default `127.0.0.1:9090`). Unauthenticated on the loopback default; set `admin.auth_token` (or `INVENTORY_ADMIN_TOKEN`) to gate every route below. A token is **required** when binding off-loopback — the agent refuses to start otherwise. Authenticate with `Authorization: Bearer <token>` or HTTP Basic auth using the token as the password (browsers get a native login prompt):
 
 | Endpoint | Method | Response |
 |----------|--------|----------|
 | `/` | GET | HTML dashboard |
-| `/hosts` | GET | HTML host inventory |
+| `/hosts` | GET | HTML host inventory (paginated: `?limit=`, `?offset=`) |
 | `/hosts/{ip}` | GET | HTML host detail (with ports) |
-| `/scans` | GET | HTML scan history |
+| `/scans` | GET | HTML scan history (paginated: `?limit=`, `?offset=`) |
 | `/watchdog` | GET | HTML watchdog peer-status panel |
 | `/export.json` | GET | Full inventory snapshot as JSON |
 | `/export.csv` | GET | Full inventory snapshot as CSV |
 | `/api/v1/hosts` | GET | Filterable JSON list — `?vendor=`, `?device_type=`, `?hostname=`, `?subnet=`, `?port=`, `?limit=`, `?offset=` |
 | `/api/v1/hosts/{ip}` | GET | Single-host JSON with nested ports |
+| `/api/v1/scans` | GET | Paginated JSON scan history — `?subnet=`, `?limit=`, `?offset=` |
 | `/scan` | POST | Trigger an out-of-cycle scan (CSRF-gated) |
 
 ### `/status` response

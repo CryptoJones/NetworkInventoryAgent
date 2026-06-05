@@ -6,31 +6,40 @@ import (
 	"strings"
 )
 
-// arpPath is the kernel-exported ARP table on Linux. On other platforms it
-// won't exist and the lookup is a silent no-op — that's intentional, we'd
-// rather give nothing than misleading data.
+// procARPPath is the kernel-exported ARP table on Linux. It is absent on
+// other platforms, where parseProcARP returns "" and lookupARP falls back to
+// the platform-specific neighbourMAC (see arp_darwin.go / arp_fallback.go).
+var procARPPath = "/proc/net/arp"
+
+// lookupARP returns the MAC address and OUI vendor for ip from the OS
+// neighbour cache, or ("", "") when it cannot be resolved. It consults the
+// Linux /proc table first (a no-op elsewhere), then the platform-specific
+// neighbourMAC. We'd rather return nothing than misleading data, so an
+// incomplete/zero entry yields "".
+func lookupARP(ip string) (string, string) {
+	mac := parseProcARP(ip, procARPPath)
+	if mac == "" {
+		mac = neighbourMAC(ip)
+	}
+	if mac == "" {
+		return "", ""
+	}
+	return mac, ouiVendor(mac)
+}
+
+// parseProcARP scans a /proc/net/arp-format file for ip's MAC, returning ""
+// if the file is absent, the IP is not present, the entry is incomplete
+// (flag 0x0), or the MAC is all-zero. Factored out so it is testable on any
+// OS and reused by the Linux build's neighbour lookup.
 //
-// The file is a stable, undocumented-but-widely-used kernel interface that
-// has held its format since at least 2.4. Each line after the header looks
-// like:
+// Each line after the header looks like:
 //
 //	IP address       HW type     Flags       HW address            Mask     Device
 //	192.168.1.1      0x1         0x2         aa:bb:cc:dd:ee:ff     *        eth0
-//
-// We re-read it on every lookup rather than caching because (a) the file is
-// small and lives in tmpfs, and (b) caching would force us to think about
-// invalidation when a host's MAC changes.
-var arpPath = "/proc/net/arp"
-
-// lookupARP returns the MAC address and OUI vendor for ip if it is in the
-// kernel's neighbour cache. Returns ("", "") for any of:
-//   - non-Linux platforms (file missing)
-//   - IP not in the table (host on a different subnet, or has not communicated recently)
-//   - MAC has an incomplete flag (0x0)
-func lookupARP(ip string) (string, string) {
-	f, err := os.Open(arpPath)
+func parseProcARP(ip, path string) string {
+	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return ""
 	}
 	defer func() { _ = f.Close() }()
 
@@ -48,11 +57,11 @@ func lookupARP(ip string) (string, string) {
 		}
 		mac := strings.ToLower(fields[3])
 		if mac == "" || mac == "00:00:00:00:00:00" {
-			return "", ""
+			return ""
 		}
-		return mac, ouiVendor(mac)
+		return mac
 	}
-	return "", ""
+	return ""
 }
 
 // ouiVendor returns the vendor name for a MAC address based on its first
@@ -166,4 +175,25 @@ var ouiTable = map[string]string{
 	"00:03:ba": "Sun/Oracle",
 	"00:14:4f": "Sun/Oracle",
 	"00:1b:24": "Sun/Oracle",
+	// IP-camera / NVR vendors (all prefixes verified against the IEEE
+	// registry via maclookup.app). Feed the "camera" classifier rule.
+	"44:19:b6": "Hikvision",
+	"c0:56:e3": "Hikvision",
+	"bc:ad:28": "Hikvision",
+	"3c:ef:8c": "Dahua",
+	"e0:50:8b": "Dahua",
+	"00:40:8c": "Axis",
+	"ac:cc:8e": "Axis",
+	// QNAP NAS — feeds the "nas" classifier rule. (Note: 00:08:9b is
+	// ICP Electronics, NOT QNAP — deliberately excluded.)
+	"24:5e:be": "QNAP",
+	// Ubiquiti network gear (APs / switches / gateways / cameras).
+	"fc:ec:da": "Ubiquiti",
+	"78:8a:20": "Ubiquiti",
+	"dc:9f:db": "Ubiquiti",
+	// Espressif (ESP8266/ESP32) — the silicon behind most DIY IoT;
+	// feeds the "embedded" classifier rule.
+	"24:0a:c4": "Espressif",
+	"30:ae:a4": "Espressif",
+	"18:fe:34": "Espressif",
 }

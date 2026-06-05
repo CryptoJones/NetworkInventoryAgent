@@ -87,6 +87,46 @@ func TestScanRepo_List_OrderedNewestFirst(t *testing.T) {
 	assert.Equal(t, "10.0.0.0/8", list[2].Subnet, "oldest scan should be last")
 }
 
+func TestScanRepo_DeleteBefore(t *testing.T) {
+	db := openTestDB(t)
+	ctx := t.Context()
+
+	base := time.Now().UTC().Truncate(time.Second)
+	// Three scans at base-2h, base-1h, base.
+	for i, age := range []time.Duration{-2 * time.Hour, -1 * time.Hour, 0} {
+		s := newTestScan("10.0.0.0/8")
+		s.StartedAt = base.Add(age)
+		_, err := db.Scans().Create(ctx, s)
+		require.NoError(t, err, "seed %d", i)
+	}
+
+	// Cutoff at base-90m removes only the base-2h row.
+	deleted, err := db.Scans().DeleteBefore(ctx, base.Add(-90*time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	list, err := db.Scans().List(ctx)
+	require.NoError(t, err)
+	assert.Len(t, list, 2, "two newer scans should remain")
+}
+
+func TestScanRepo_DeleteBefore_NoMatch(t *testing.T) {
+	db := openTestDB(t)
+	ctx := t.Context()
+
+	s := newTestScan("10.0.0.0/8")
+	_, err := db.Scans().Create(ctx, s)
+	require.NoError(t, err)
+
+	deleted, err := db.Scans().DeleteBefore(ctx, time.Now().UTC().Add(-24*time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), deleted, "nothing older than the cutoff")
+
+	list, err := db.Scans().List(ctx)
+	require.NoError(t, err)
+	assert.Len(t, list, 1)
+}
+
 func TestScanRepo_Finish(t *testing.T) {
 	db := openTestDB(t)
 	ctx := t.Context()

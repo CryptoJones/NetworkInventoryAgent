@@ -17,6 +17,460 @@ _No unreleased changes._
 
 ---
 
+## 26.30 — 2026-06-05
+
+VNC fingerprinting. Port 5900 was in the deep-probe list but had no handler,
+so `Port.Service` stayed empty for VNC servers. Post-backlog feature work
+(no `Planning.md` number).
+
+### Added
+
+- **VNC identification** (`vncBanner`) — reads the RFB ProtocolVersion
+  greeting the server sends on connect (e.g. `RFB 003.008`) →
+  `VNC: RFB 003.008`. Validates the `RFB ` prefix, so a non-VNC service on
+  5900 is left unlabelled rather than mistagged.
+
+### Changed
+
+- **`fingerprint()` now dispatches port 5900** to the new handler.
+
+### Tests
+
+- `internal/scanner/banner_test.go` — RFB greeting identified; a non-RFB
+  greeting yields "".
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.29 — 2026-06-05
+
+macOS MAC/vendor enrichment. ARP enrichment was Linux-only (`/proc/net/arp`);
+on macOS the `MACAddress`/`Vendor` fields were always empty. This adds a
+macOS neighbour lookup **without invoking a shell** — it reads the routing
+table via a routing socket (`golang.org/x/net/route`), preserving the
+project's "no external processes are invoked" posture (OWASP A03).
+Post-backlog feature work (no `Planning.md` number).
+
+### Added
+
+- **macOS neighbour resolution** (`arp_darwin.go`) — dumps the routing
+  information base and returns the link-layer address for a target IP.
+  Verified on a live host against `arp -n`.
+- **`golang.org/x/net`** promoted from an indirect to a direct dependency
+  (already in the module graph; still pure Go, no cgo).
+
+### Changed
+
+- **`arp.go` refactored for portability**: the `/proc/net/arp` parser is now
+  `parseProcARP` (pure, testable on any OS); `lookupARP` consults it first,
+  then a platform `neighbourMAC` (`arp_darwin.go` for macOS,
+  `arp_fallback.go` returning "" for Linux/Windows/other — Linux is fully
+  served by the proc path).
+
+### Tests
+
+- `internal/scanner/arp_test.go` — parser tests rewritten around
+  `parseProcARP`; a cross-platform `lookupARP` happy-path test via a proc
+  fixture.
+- `internal/scanner/arp_darwin_test.go` — validates `neighbourMAC` against
+  the live routing table (skips when no neighbour entries exist) and the
+  no-match/bad-input paths.
+
+### Notes
+
+- Windows neighbour enrichment remains a graceful no-op (no
+  `GetIpNetTable` implementation yet); it degrades to vendor-less inventory
+  rather than guessing.
+- Builds verified for darwin, linux, and windows; `go test ./...`,
+  `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.28 — 2026-06-05
+
+JSON scan-history API. The query API exposed hosts but not scans;
+programmatic consumers (freshness/coverage dashboards) had to scrape the
+HTML `/scans` page. Adds a symmetric endpoint. Post-backlog feature work
+(no `Planning.md` number).
+
+### Added
+
+- **`GET /api/v1/scans`** — paginated JSON scan history with the same
+  `?limit=`/`?offset=` envelope (`{total,limit,offset,scans}`) as
+  `/api/v1/hosts`, plus an optional `?subnet=` exact-match filter. Newest
+  first.
+
+### Tests
+
+- `internal/admin/api_test.go` — full list, pagination (total vs page),
+  subnet filter, and invalid `limit` → 400.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.27 — 2026-06-05
+
+Scanner config-honesty fixes. Two small consistency gaps. Post-backlog
+polish (no `Planning.md` number).
+
+### Changed
+
+- **Reverse-DNS now honours the configured per-host timeout** instead of a
+  hardcoded 500ms. Aggressive or relaxed `scanner.timeout` / per-profile
+  `timeout` values now apply to PTR lookups too (falls back to 500ms only
+  when unset).
+
+### Added
+
+- **`inventory_udp_probe_failure_total`** metric, incremented on a
+  definitive closed (ICMP port-unreachable) UDP result — the counterpart to
+  the existing success counter. Ambiguous no-reply probes are still not
+  counted (they're genuinely unknown, not failures).
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.26 — 2026-06-05
+
+OUI table expansion for camera / NAS / IoT vendors, wired into the
+classifier. The 26.23 `camera` rule could only fire on RTSP (not a default
+probe port), so it rarely triggered; this adds the vendor OUIs that make
+vendor-based detection work. Post-backlog feature work (no `Planning.md`
+number).
+
+### Added
+
+- **14 new OUI prefixes**, each verified against the IEEE registry (via
+  maclookup.app): Hikvision (3), Dahua (2), Axis (2), QNAP (1),
+  Ubiquiti (3), Espressif (3).
+- **Classifier vendor rules** using them: Hikvision/Dahua/Axis → `camera`,
+  QNAP → `nas` (joining Synology/WD), Espressif → `embedded` (joining
+  Raspberry Pi).
+
+### Tests
+
+- `internal/scanner/arp_test.go` — the new prefixes resolve to the right
+  vendor, plus a guard that `00:08:9b` stays **not** QNAP (it's ICP
+  Electronics — a candidate that verification rejected).
+- `internal/scanner/classify_test.go` — camera/nas/embedded by vendor.
+
+### Notes
+
+- Verification mattered: a plausible "QNAP" prefix (`00:08:9b`) turned out
+  to be ICP Electronics and was excluded rather than shipped wrong.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.25 — 2026-06-05
+
+Pagination for the admin host and scan list pages. `/hosts` and `/scans`
+rendered every row in one response — a deployment with tens of thousands of
+hosts produced a multi-megabyte HTML page. Both pages now paginate with the
+same `?limit=`/`?offset=` convention as the JSON API. Post-backlog
+reliability work (no `Planning.md` number).
+
+### Added
+
+- **`?limit=` / `?offset=` on `/hosts` and `/scans`** (default 100, capped
+  at 1000), reusing the API's `parsePagination`. Prev/Next controls and a
+  "Showing X–Y of N" indicator render via a shared `pager` template
+  partial; the controls hide when everything fits on one page.
+- **`pager` type + `newPager` / `pageSlice` helpers** in `internal/admin`.
+
+### Changed
+
+- **The host-inventory subtitle now reports the full total**, not the
+  current page size.
+
+### Tests
+
+- `internal/admin/handlers_extra_test.go` — page windowing (rows in/out of
+  range), Prev/Next link targets, total reporting, and an invalid `limit`
+  → 400.
+
+### Notes
+
+- This bounds the rendered page size. The underlying `store.List` still
+  loads the full slice before windowing; pushing `LIMIT`/`OFFSET` into the
+  store interface is a larger change left for later.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.24 — 2026-06-05
+
+UDP service fingerprinting. The scanner recorded open UDP ports but left
+`Port.Service` empty (an in-code "out of scope" note); a DNS resolver and a
+plain open UDP port were indistinguishable in the inventory. UDP ports
+confirmed open are now fingerprinted for the two highest-value protocols.
+Post-backlog feature work (no `Planning.md` number).
+
+### Added
+
+- **DNS fingerprint** — sends a standard A query for the root and confirms
+  the reply is a DNS response (QR bit set, transaction ID echoed) →
+  `DNS`. Identifies the service regardless of the answer (REFUSED still
+  proves DNS).
+- **NTP fingerprint** — sends an NTPv3 client request and checks the reply
+  is server mode → `NTP`, with the stratum appended when valid
+  (`NTP (stratum 2)`).
+- **`udpFingerprint` / `udpExchange`** helpers in a new `udp_banner.go`.
+
+### Changed
+
+- **`udpScan` now fingerprints open UDP ports** (ports 53/123 today; others
+  still record an empty Service). One extra datagram per matched open port.
+
+### Tests
+
+- `internal/scanner/udp_banner_test.go` — DNS identified / not-DNS, NTP with
+  stratum / non-server mode, unfingerprinted port, and the no-responder
+  timeout, via a UDP test responder.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.23 — 2026-06-05
+
+Device-classifier expansion. Several common asset classes previously fell
+through to the generic `appliance` tag (or no tag). The classifier gains
+five new categories, built only on signals already available (NIC OUI +
+open ports) — no dead vendor strings. Post-backlog feature work (no
+`Planning.md` number).
+
+### Added
+
+- **`nas`** — Synology / Western Digital by NIC OUI, or NFS (2049) +
+  SMB (445). Fires before the Windows SMB rule so a NAS isn't mislabelled
+  `windows-host`.
+- **`hypervisor`** — now also matches QEMU/KVM, VirtualBox, and Microsoft
+  Hyper-V by OUI, and Proxmox VE by its 8006 management port (previously
+  only VMware-by-ports).
+- **`kubernetes-node`** — kube-apiserver (6443), etcd (2379), or kubelet
+  (10250).
+- **`container-host`** — Docker daemon (2375/2376).
+- **`camera`** — RTSP (554).
+
+### Tests
+
+- `internal/scanner/classify_test.go` — cases for each new category plus a
+  regression that SMB alone is still `windows-host` (not `nas`).
+
+### Notes
+
+- The Kubernetes/Docker/Proxmox/RTSP ports sit outside the default
+  deep-probe list, so those labels fire when an operator adds the ports via
+  a per-subnet `deep_probe_ports` profile; NAS-by-NFS+SMB and the OUI-based
+  rules fire under the default configuration.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.22 — 2026-06-05
+
+Test-coverage fill for previously untested units. No behaviour change.
+Post-backlog quality work (no `Planning.md` number).
+
+### Tests
+
+- **`internal/logging`** — `0% → 100%`. Level parsing (debug/info/warn/
+  error + unknown→info fallback), JSON vs text handler selection, and the
+  `agent` field injection, via a captured-stdout helper.
+- **`internal/health/client.go`** — the watchdog peer client had no test
+  file. Added `Ping` (200 / non-200 / bearer-token / connection error)
+  and `FetchStatus` (decode OK / bad JSON) coverage.
+- **`internal/admin`** — covered the previously untested handlers:
+  `handleWatchdog` (with and without a peer) and `handleScanTrigger`
+  (not-wired → 501, success → 204, already-pending → 503), plus the CSRF
+  rejection path on `POST /scan` (missing token → 403).
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+  Package coverage after this change: logging 100%, health 79.6%, admin
+  74.1%, scanner 71.7%.
+
+---
+
+## 26.21 — 2026-06-05
+
+Service fingerprinting for PostgreSQL, Redis, and Memcached. These ports
+(5432, 6379, 11211) were already in the deep-probe list and recorded as
+open, but `fingerprint()` had no handler for them, so `Port.Service` was
+always empty — operators couldn't tell a Redis from a random open port.
+Post-backlog feature work (no `Planning.md` number).
+
+### Added
+
+- **PostgreSQL identification** (`postgresProbe`) — issues the SSLRequest
+  startup packet and reads the single-byte `S`/`N` reply. Reliable
+  identification without authenticating; labelled `PostgreSQL`.
+- **Redis/Valkey fingerprinting** (`redisInfo`) — sends `INFO server` and
+  parses `redis_version:` → `Redis: <version>`. An auth-gated server
+  (`-NOAUTH`) is still identified as `Redis (auth required)`.
+- **Memcached fingerprinting** (`memcachedVersion`) — sends the text
+  `version` command → `Memcached: <version>`.
+
+### Changed
+
+- **`fingerprint()` now dispatches ports 5432/6379/11211** to the new
+  handlers; all other ports are unchanged.
+
+### Tests
+
+- `internal/scanner/banner_test.go` — Redis version + NOAUTH paths,
+  Memcached version + non-memcached reply, Postgres `S`/`N` identification
+  + non-postgres reply. Adds a `startRequestResponse` test helper for
+  client-speaks-first protocols.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.20 — 2026-06-05
+
+Scan-history retention. The `scans` table grew without bound: hosts had a
+`host_ttl` pruner, but completed scan records accumulated forever (≈105K
+rows/year at the 5-minute default), bloating the DB and the unbounded
+`/scans` view. This adds an optional retention policy mirroring host
+pruning. Post-backlog reliability work (no `Planning.md` number).
+
+### Added
+
+- **`scanner.scan_history_ttl` config** — when set, the end of each scan
+  cycle deletes scan rows whose `started_at` is older than `now - TTL`.
+  Zero (the default) keeps full history, so existing deployments are
+  unchanged.
+- **`store.ScanStore.DeleteBefore(ctx, cutoff)`** + its SQLite
+  implementation (`DELETE FROM scans WHERE started_at < ?`, returning the
+  row count) — a single bounded DELETE, not a list-then-delete loop.
+- **`inventory_scans_pruned_total`** Prometheus counter.
+
+### Changed
+
+- **The agent now runs a scan-history prune each cycle**, right after the
+  host prune (`Agent.pruneScans`). The `Agent` retains the `ScanStore`
+  passed to `New` for this; no constructor signature change.
+
+### Tests
+
+- `internal/sqlite/scan_test.go` — `DeleteBefore` removes only rows older
+  than the cutoff and reports the count; no-match returns 0.
+- `internal/agent/agent_test.go` — old scans pruned when TTL is set; full
+  history kept when TTL is 0.
+- `internal/config/config_test.go` — `scan_history_ttl` parses; default 0.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.19 — 2026-06-05
+
+Alert-sink URL validation. `watchdog.peer_addr` was scheme-validated at
+config load, but `alerts.webhook.url` was passed to the HTTP client with
+no validation at all — a typo or hostile config value like
+`file:///etc/passwd` or `gopher://…` reached the client verbatim. Syslog
+addresses were validated only when the sink dialed. This extends the
+existing peer-address guard to every outbound sink target (OWASP A10).
+Post-backlog security hardening (no `Planning.md` number).
+
+### Added
+
+- **`validateSinkURL`** in `internal/config` — a shared scheme/host check
+  used for both alert sinks.
+
+### Changed
+
+- **`alerts.webhook.url` is now scheme-validated at config load** —
+  rejected unless `http` or `https` with a non-empty host. The agent
+  refuses to start on an invalid value instead of failing silently on the
+  first event.
+- **`alerts.syslog.addr` is now scheme-validated at config load** too
+  (`udp`/`tcp` + host), giving a clear boot-time error before any network
+  dial is attempted. The eager-dial check in `NewSyslogSink` remains as
+  defence in depth.
+
+### Notes
+
+- Private/internal hosts are deliberately **not** blocked — internal
+  webhook receivers and localhost syslog are legitimate, common
+  deployments, consistent with `peer_addr` allowing loopback. The guard
+  targets scheme confusion, not network egress policy.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
+## 26.18 — 2026-06-05
+
+Admin console authentication gate. The admin console — which serves the
+full host/port inventory, `/export.{json,csv}`, the `/api/v1/*` query API,
+and the `POST /scan` trigger — previously had no authentication and no
+off-loopback guard, unlike the health server. Binding `admin.addr` to a
+non-loopback address (e.g. `0.0.0.0` for Docker, or via
+`INVENTORY_ADMIN_ADDR`) exposed everything to anyone on the network. This
+closes that asymmetry. Post-backlog security hardening (no `Planning.md`
+number).
+
+### Added
+
+- **`admin.auth_token` config field** (env: `INVENTORY_ADMIN_TOKEN`) — a
+  shared secret that gates every admin route. When set, clients
+  authenticate with either `Authorization: Bearer <token>` (curl, the JSON
+  API, exports, scripts) or HTTP Basic auth using the token as the
+  password and any username (so browsers show a native login prompt).
+  Tokens are compared in constant time. Empty/unset is a no-op, so the
+  loopback default stays credential-free.
+- **`admin.ServerOptions`** — carries `AuthToken` into `admin.NewServer`,
+  mirroring `health.ServerOptions`.
+
+### Changed
+
+- **`admin.NewServer` takes a trailing `ServerOptions` argument.** In-tree
+  callers (runtime + tests) updated. The admin package has no external
+  callers, so no compatibility shim was added.
+- **Off-loopback admin binds now require a token.** Config validation
+  refuses to start when `admin.addr` is non-loopback and no
+  `admin.auth_token` is set — the same rule already enforced for
+  `health.addr`.
+- **`chmod 600` enforcement extended** — a config file carrying
+  `admin.auth_token` must not be group/world-readable, matching the
+  existing check for `health.auth_token` and `watchdog.peer_token`.
+
+### Tests
+
+- `internal/admin/auth_test.go` — no-creds → 401 + `WWW-Authenticate`;
+  correct Bearer → 200; correct Basic password → 200; wrong Bearer/Basic
+  → 401; exports and `POST /scan` gated (auth precedes CSRF); empty token
+  → ungated (loopback regression guard).
+- `internal/config/config_test.go` — off-loopback admin without token →
+  error; with token → ok; `INVENTORY_ADMIN_TOKEN` override satisfies the
+  rule; world-readable file carrying an admin token → refused.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green
+  (0 issues). The shipped `configs/*.json` use loopback binds, so no token
+  is required for the default local/paired deployments.
+
+---
+
 ## 26.17 — 2026-05-27
 
 Documentation catch-up. No behaviour change — closes the gap between

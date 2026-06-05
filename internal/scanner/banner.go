@@ -153,6 +153,131 @@ func mysqlGreeting(ctx context.Context, ip string, port int, timeout time.Durati
 	return "MySQL: " + string(buf[5:end])
 }
 
+// redisInfo identifies a Redis/Valkey server and, when permitted, its
+// version. Redis speaks RESP: we send `INFO server` and read the reply.
+// An unauthenticated server returns a bulk string containing
+// "redis_version:X"; a protected one returns "-NOAUTH …". Either reply
+// shape identifies Redis without authenticating.
+func redisInfo(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if _, err := conn.Write([]byte("INFO server\r\n")); err != nil {
+		return ""
+	}
+	buf := make([]byte, maxBannerBytes)
+	n, _ := conn.Read(buf)
+	if n == 0 {
+		return ""
+	}
+	resp := string(buf[:n])
+	if i := strings.Index(resp, "redis_version:"); i >= 0 {
+		ver := resp[i+len("redis_version:"):]
+		if j := strings.IndexAny(ver, "\r\n"); j >= 0 {
+			ver = ver[:j]
+		}
+		if ver = strings.TrimSpace(ver); ver != "" {
+			return "Redis: " + ver
+		}
+	}
+	if strings.HasPrefix(resp, "-NOAUTH") {
+		return "Redis (auth required)"
+	}
+	// Any valid RESP reply (+, -, :, $, *) confirms Redis even without a
+	// parseable version.
+	switch resp[0] {
+	case '+', '-', ':', '$', '*':
+		return "Redis"
+	}
+	return ""
+}
+
+// memcachedVersion sends the text-protocol `version` command. Memcached
+// replies "VERSION <x.y.z>\r\n"; anything else means it isn't memcached.
+func memcachedVersion(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if _, err := conn.Write([]byte("version\r\n")); err != nil {
+		return ""
+	}
+	line, err := bufio.NewReader(&capReader{r: conn, n: maxBannerBytes}).ReadString('\n')
+	if err != nil && line == "" {
+		return ""
+	}
+	line = strings.TrimRight(line, "\r\n")
+	ver, ok := strings.CutPrefix(line, "VERSION ")
+	if !ok || ver == "" {
+		return ""
+	}
+	return "Memcached: " + ver
+}
+
+// postgresProbe identifies a PostgreSQL server with the SSLRequest startup
+// packet (int32 length=8, int32 request code 80877103). Postgres answers
+// with a single byte 'S' (SSL offered) or 'N' (not offered); no other
+// common service responds this way, so it's a reliable identifier without
+// authenticating. The server version needs a full startup handshake, which
+// we deliberately avoid.
+func postgresProbe(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = conn.Close() }()
+
+	// SSLRequest: length=8, code=80877103 (0x04D2162F), big-endian.
+	req := []byte{0x00, 0x00, 0x00, 0x08, 0x04, 0xd2, 0x16, 0x2f}
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if _, err := conn.Write(req); err != nil {
+		return ""
+	}
+	buf := make([]byte, 1)
+	if _, err := conn.Read(buf); err != nil {
+		return ""
+	}
+	if buf[0] == 'S' || buf[0] == 'N' {
+		return "PostgreSQL"
+	}
+	return ""
+}
+
+// vncBanner reads the RFB ProtocolVersion greeting a VNC server sends on
+// connect (12 bytes, e.g. "RFB 003.008\n") and returns "VNC: RFB 003.008".
+// The greeting is the server's first message, so this is passive. Returns ""
+// unless the line starts with "RFB ", so a non-VNC service squatting on 5900
+// isn't mislabelled.
+func vncBanner(ctx context.Context, ip string, port int, timeout time.Duration) string {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	line, err := bufio.NewReader(&capReader{r: conn, n: maxBannerBytes}).ReadString('\n')
+	if err != nil && line == "" {
+		return ""
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if !strings.HasPrefix(line, "RFB ") {
+		return ""
+	}
+	return "VNC: " + line
+}
+
 // capReader wraps an io.Reader with a hard byte cap, defended against a
 // peer that sends data without an end-of-line for longer than we'd want
 // to wait. Used by lineBanner.

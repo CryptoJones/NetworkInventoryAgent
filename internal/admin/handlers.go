@@ -52,9 +52,15 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load hosts", http.StatusInternalServerError)
 		return
 	}
+	limit, offset, err := parsePagination(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.render(w, "hosts", hostsData{
 		pageData: s.basePage("Hosts"),
-		Hosts:    hosts,
+		Hosts:    pageSlice(hosts, offset, limit),
+		Pager:    newPager("/hosts", len(hosts), limit, offset),
 	})
 }
 
@@ -88,9 +94,15 @@ func (s *Server) handleScans(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load scans", http.StatusInternalServerError)
 		return
 	}
+	limit, offset, err := parsePagination(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.render(w, "scans", scansData{
 		pageData: s.basePage("Scans"),
-		Scans:    scans,
+		Scans:    pageSlice(scans, offset, limit),
+		Pager:    newPager("/scans", len(scans), limit, offset),
 	})
 }
 

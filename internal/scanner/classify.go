@@ -41,6 +41,27 @@ func classify(vendor, osfp string, tcp, udp []int) string {
 	if strings.Contains(vlow, "vmware") && (tcpSet[902] || tcpSet[5988] || tcpSet[5989]) {
 		return "hypervisor"
 	}
+	// Other virtualization stacks are identifiable by NIC OUI alone
+	// (QEMU/KVM, VirtualBox, Microsoft Hyper-V) or, for Proxmox VE, its
+	// 8006 management port.
+	if strings.Contains(vlow, "qemu") || strings.Contains(vlow, "kvm") ||
+		strings.Contains(vlow, "virtualbox") || strings.Contains(vlow, "hyper-v") {
+		return "hypervisor"
+	}
+	if tcpSet[8006] {
+		return "hypervisor"
+	}
+
+	// ── Container / orchestration platforms ───────────────────────
+	// Unique control-plane ports. These sit outside the default
+	// deep-probe list, so they only fire when an operator probes them —
+	// but the labels are precise when the data is present.
+	if tcpSet[6443] || tcpSet[2379] || tcpSet[10250] {
+		return "kubernetes-node"
+	}
+	if tcpSet[2375] || tcpSet[2376] {
+		return "container-host"
+	}
 
 	// ── Database servers ──────────────────────────────────────────
 	// Database ports are uniquely strong signals — almost nothing
@@ -58,6 +79,18 @@ func classify(vendor, osfp string, tcp, udp []int) string {
 		return "database (redis)"
 	case tcpSet[11211]:
 		return "database (memcached)"
+	}
+
+	// ── Storage / NAS ─────────────────────────────────────────────
+	// Vendor OUI pins Synology / Western Digital; otherwise NFS (2049)
+	// alongside SMB (445) is the NAS signature. Must precede the Windows
+	// SMB rule below so a NAS isn't mislabelled windows-host.
+	if strings.Contains(vlow, "synology") || strings.Contains(vlow, "western digital") ||
+		strings.Contains(vlow, "qnap") {
+		return "nas"
+	}
+	if tcpSet[2049] && tcpSet[445] {
+		return "nas"
 	}
 
 	// ── Active Directory / Windows DC ─────────────────────────────
@@ -106,8 +139,20 @@ func classify(vendor, osfp string, tcp, udp []int) string {
 	if tcpSet[1883] || tcpSet[8883] {
 		return "iot-broker"
 	}
-	if strings.Contains(vlow, "raspberry pi") {
+	if strings.Contains(vlow, "raspberry pi") || strings.Contains(vlow, "espressif") {
 		return "embedded"
+	}
+
+	// ── IP cameras / NVR ──────────────────────────────────────────
+	// Vendor OUI pins the major video brands; otherwise RTSP (554) is the
+	// unambiguous signal (outside the default deep-probe list, so it fires
+	// when an operator probes it).
+	if strings.Contains(vlow, "hikvision") || strings.Contains(vlow, "dahua") ||
+		strings.Contains(vlow, "axis") {
+		return "camera"
+	}
+	if tcpSet[554] {
+		return "camera"
 	}
 
 	// ── SSH-banner-driven OS hints ────────────────────────────────

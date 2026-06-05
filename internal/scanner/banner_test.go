@@ -133,7 +133,110 @@ func TestTLSHTTPSFingerprint(t *testing.T) {
 	}
 }
 
+func TestRedisInfo_Version(t *testing.T) {
+	resp := "$80\r\n# Server\r\nredis_version:7.2.4\r\nredis_mode:standalone\r\n"
+	addr := startRequestResponse(t, []byte(resp))
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := redisInfo(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "Redis: 7.2.4" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRedisInfo_NoAuth(t *testing.T) {
+	addr := startRequestResponse(t, []byte("-NOAUTH Authentication required.\r\n"))
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := redisInfo(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "Redis (auth required)" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestMemcachedVersion(t *testing.T) {
+	addr := startRequestResponse(t, []byte("VERSION 1.6.21\r\n"))
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := memcachedVersion(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "Memcached: 1.6.21" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestMemcachedVersion_NotMemcached(t *testing.T) {
+	addr := startRequestResponse(t, []byte("ERROR\r\n"))
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := memcachedVersion(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "" {
+		t.Errorf("expected empty for non-memcached reply, got %q", got)
+	}
+}
+
+func TestPostgresProbe_Identified(t *testing.T) {
+	for _, reply := range []byte{'S', 'N'} {
+		addr := startRequestResponse(t, []byte{reply})
+		host, portStr, _ := net.SplitHostPort(addr)
+		got := postgresProbe(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+		if got != "PostgreSQL" {
+			t.Errorf("reply %q: got %q", reply, got)
+		}
+	}
+}
+
+func TestPostgresProbe_NotPostgres(t *testing.T) {
+	addr := startRequestResponse(t, []byte{'X'})
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := postgresProbe(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "" {
+		t.Errorf("expected empty for non-postgres reply, got %q", got)
+	}
+}
+
+func TestVNCBanner_Identified(t *testing.T) {
+	addr := startLineGreeting(t, "RFB 003.008\n")
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := vncBanner(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "VNC: RFB 003.008" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestVNCBanner_NotVNC(t *testing.T) {
+	// A non-RFB greeting on the port must not be labelled VNC.
+	addr := startLineGreeting(t, "220 some-ftp-server\r\n")
+	host, portStr, _ := net.SplitHostPort(addr)
+	got := vncBanner(context.Background(), host, atoi(t, portStr), 500*time.Millisecond)
+	if got != "" {
+		t.Errorf("got %q, want empty for non-RFB greeting", got)
+	}
+}
+
 // --- helpers ---
+
+// startRequestResponse accepts one connection, consumes the client's
+// request bytes, then writes the canned response and closes. Suited to
+// request/response protocols (Redis, Memcached, Postgres) where the client
+// speaks first.
+func startRequestResponse(t *testing.T, response []byte) (addr string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.SetReadDeadline(time.Now().Add(time.Second))
+			buf := make([]byte, 256)
+			_, _ = c.Read(buf)
+			_, _ = c.Write(response)
+			_ = c.Close()
+		}
+	}()
+	return ln.Addr().String()
+}
 
 func startLineGreeting(t *testing.T, line string) (addr string) {
 	t.Helper()

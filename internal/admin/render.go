@@ -59,6 +59,7 @@ type dashboardData struct {
 type hostsData struct {
 	pageData
 	Hosts []*models.Host
+	Pager pager
 }
 
 type hostDetailData struct {
@@ -70,6 +71,60 @@ type hostDetailData struct {
 type scansData struct {
 	pageData
 	Scans []*models.Scan
+	Pager pager
+}
+
+// pager carries pagination state for list templates. PagePath is the route
+// the prev/next links target (e.g. "/hosts"). From/To are 1-based indices of
+// the rows shown (both 0 when the page is empty).
+type pager struct {
+	PagePath   string
+	Total      int
+	Limit      int
+	Offset     int
+	From       int
+	To         int
+	HasPrev    bool
+	HasNext    bool
+	PrevOffset int
+	NextOffset int
+}
+
+// newPager computes display + link state for a window [offset, offset+limit)
+// over a list of `total` items.
+func newPager(path string, total, limit, offset int) pager {
+	p := pager{PagePath: path, Total: total, Limit: limit, Offset: offset}
+	if offset < total {
+		p.From = offset + 1
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		p.To = end
+	}
+	if offset > 0 {
+		p.HasPrev = true
+		if p.PrevOffset = offset - limit; p.PrevOffset < 0 {
+			p.PrevOffset = 0
+		}
+	}
+	if offset+limit < total {
+		p.HasNext = true
+		p.NextOffset = offset + limit
+	}
+	return p
+}
+
+// pageSlice returns the [offset, offset+limit) window of s, clamped to bounds.
+func pageSlice[T any](s []T, offset, limit int) []T {
+	if offset >= len(s) {
+		return nil
+	}
+	end := offset + limit
+	if end > len(s) {
+		end = len(s)
+	}
+	return s[offset:end]
 }
 
 type watchdogData struct {

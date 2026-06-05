@@ -148,6 +148,7 @@ func Run(opts Options) int {
 		cfg.Admin.Addr, opts.Name,
 		db.Hosts(), db.Ports(), db.Scans(),
 		tracker.Get, a.Trigger,
+		admin.ServerOptions{AuthToken: cfg.Admin.AuthToken},
 	)
 	if err != nil {
 		slog.Error("failed to create admin server", "err", err)
