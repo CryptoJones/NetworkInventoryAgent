@@ -17,6 +17,34 @@ _No unreleased changes._
 
 ---
 
+## 26.30 — 2026-06-05
+
+VNC fingerprinting. Port 5900 was in the deep-probe list but had no handler,
+so `Port.Service` stayed empty for VNC servers. Post-backlog feature work
+(no `Planning.md` number).
+
+### Added
+
+- **VNC identification** (`vncBanner`) — reads the RFB ProtocolVersion
+  greeting the server sends on connect (e.g. `RFB 003.008`) →
+  `VNC: RFB 003.008`. Validates the `RFB ` prefix, so a non-VNC service on
+  5900 is left unlabelled rather than mistagged.
+
+### Changed
+
+- **`fingerprint()` now dispatches port 5900** to the new handler.
+
+### Tests
+
+- `internal/scanner/banner_test.go` — RFB greeting identified; a non-RFB
+  greeting yields "".
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.29 — 2026-06-05
 
 macOS MAC/vendor enrichment. ARP enrichment was Linux-only (`/proc/net/arp`);
