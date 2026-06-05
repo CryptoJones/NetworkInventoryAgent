@@ -17,6 +17,60 @@ _No unreleased changes._
 
 ---
 
+## 26.18 — 2026-06-05
+
+Admin console authentication gate. The admin console — which serves the
+full host/port inventory, `/export.{json,csv}`, the `/api/v1/*` query API,
+and the `POST /scan` trigger — previously had no authentication and no
+off-loopback guard, unlike the health server. Binding `admin.addr` to a
+non-loopback address (e.g. `0.0.0.0` for Docker, or via
+`INVENTORY_ADMIN_ADDR`) exposed everything to anyone on the network. This
+closes that asymmetry. Post-backlog security hardening (no `Planning.md`
+number).
+
+### Added
+
+- **`admin.auth_token` config field** (env: `INVENTORY_ADMIN_TOKEN`) — a
+  shared secret that gates every admin route. When set, clients
+  authenticate with either `Authorization: Bearer <token>` (curl, the JSON
+  API, exports, scripts) or HTTP Basic auth using the token as the
+  password and any username (so browsers show a native login prompt).
+  Tokens are compared in constant time. Empty/unset is a no-op, so the
+  loopback default stays credential-free.
+- **`admin.ServerOptions`** — carries `AuthToken` into `admin.NewServer`,
+  mirroring `health.ServerOptions`.
+
+### Changed
+
+- **`admin.NewServer` takes a trailing `ServerOptions` argument.** In-tree
+  callers (runtime + tests) updated. The admin package has no external
+  callers, so no compatibility shim was added.
+- **Off-loopback admin binds now require a token.** Config validation
+  refuses to start when `admin.addr` is non-loopback and no
+  `admin.auth_token` is set — the same rule already enforced for
+  `health.addr`.
+- **`chmod 600` enforcement extended** — a config file carrying
+  `admin.auth_token` must not be group/world-readable, matching the
+  existing check for `health.auth_token` and `watchdog.peer_token`.
+
+### Tests
+
+- `internal/admin/auth_test.go` — no-creds → 401 + `WWW-Authenticate`;
+  correct Bearer → 200; correct Basic password → 200; wrong Bearer/Basic
+  → 401; exports and `POST /scan` gated (auth precedes CSRF); empty token
+  → ungated (loopback regression guard).
+- `internal/config/config_test.go` — off-loopback admin without token →
+  error; with token → ok; `INVENTORY_ADMIN_TOKEN` override satisfies the
+  rule; world-readable file carrying an admin token → refused.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green
+  (0 issues). The shipped `configs/*.json` use loopback binds, so no token
+  is required for the default local/paired deployments.
+
+---
+
 ## 26.17 — 2026-05-27
 
 Documentation catch-up. No behaviour change — closes the gap between

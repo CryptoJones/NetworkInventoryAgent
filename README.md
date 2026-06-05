@@ -366,6 +366,7 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `health.client_ca_path` | — | When set, requires mTLS (clients must present a cert signed by this CA). |
 | **Admin console** | | |
 | `admin.addr` | `127.0.0.1:9090` | Listen address for the admin console + `/api/v1/*`. |
+| `admin.auth_token` | — | Shared secret gating the whole console. Required when `admin.addr` is off-loopback. Clients send `Authorization: Bearer <token>` or HTTP Basic with the token as the password. |
 | **Watchdog** | | |
 | `watchdog.peer_addr` | — | Base URL of the partner agent's health server. |
 | `watchdog.peer_token` | — | Bearer token sent to the peer. Must match peer's `health.auth_token`. |
@@ -421,6 +422,7 @@ fails fast if both are set.
 | `INVENTORY_ADMIN_ADDR` | `admin.addr` |
 | `INVENTORY_AUTH_TOKEN` | `health.auth_token` |
 | `INVENTORY_PEER_TOKEN` | `watchdog.peer_token` |
+| `INVENTORY_ADMIN_TOKEN` | `admin.auth_token` |
 
 ## Health endpoints
 
@@ -434,7 +436,7 @@ Both agents expose two HTTP endpoints used by the watchdog and for external moni
 | `/status` | GET | JSON-encoded status snapshot (see below) |
 | `/metrics` | GET | Prometheus text exposition format — counters for scans, probes, DB, watchdog, alerts; gauges for host count + peer-up state |
 
-**Admin console** (default `127.0.0.1:9090`, unauthenticated — keep loopback unless on a trusted segment):
+**Admin console** (default `127.0.0.1:9090`). Unauthenticated on the loopback default; set `admin.auth_token` (or `INVENTORY_ADMIN_TOKEN`) to gate every route below. A token is **required** when binding off-loopback — the agent refuses to start otherwise. Authenticate with `Authorization: Bearer <token>` or HTTP Basic auth using the token as the password (browsers get a native login prompt):
 
 | Endpoint | Method | Response |
 |----------|--------|----------|
