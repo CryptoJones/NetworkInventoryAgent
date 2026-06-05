@@ -17,6 +17,41 @@ _No unreleased changes._
 
 ---
 
+## 26.32 — 2026-06-05
+
+Windows MAC/vendor enrichment. ARP enrichment now covers all three major
+platforms; Windows previously left `MACAddress`/`Vendor` empty. Like the
+macOS path it invokes **no shell** — it calls `GetIpNetTable` from
+`iphlpapi.dll` directly. Post-backlog feature work (no `Planning.md` number).
+
+### Added
+
+- **Windows neighbour resolution** (`arp_windows.go`) — `GetIpNetTable` via
+  `golang.org/x/sys/windows`, parsing the `MIB_IPNETTABLE` rows for the
+  target IP's 6-byte MAC.
+- **`golang.org/x/sys`** promoted from indirect to direct dependency
+  (already in the module graph; pure Go).
+
+### Changed
+
+- **`arp_fallback.go` build tag** narrowed to `!darwin && !windows`; Windows
+  now has a native lookup rather than the no-op.
+
+### Tests
+
+- `internal/scanner/arp_windows_test.go` — the table parser
+  (`parseIPNetTable`) is unit-tested with a synthetic `MIB_IPNETTABLE`
+  (match, zero MAC, wrong length, absent IP, truncated buffer).
+
+### Notes
+
+- The syscall path is compile- and vet-verified for windows/amd64 and
+  windows/arm64 but not runtime-tested on this build host; it degrades
+  safely to "" on any error. Linux and macOS paths are unchanged.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.31 — 2026-06-05
 
 RDP, MSSQL, and MongoDB fingerprinting — the last of the deep-probed ports
