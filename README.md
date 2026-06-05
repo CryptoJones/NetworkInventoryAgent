@@ -346,6 +346,7 @@ Each agent reads a JSON config file and then applies environment variable overri
 | `scanner.udp_ports` | `[]` | UDP ports to probe per live host. Empty disables UDP probing. |
 | `scanner.enrich_arp` | `false` | Populate Host.MACAddress + Vendor from `/proc/net/arp` (Linux). |
 | `scanner.host_ttl` | `0` (disabled) | Hosts not seen within this duration are deleted at the end of each cycle. |
+| `scanner.scan_history_ttl` | `0` (disabled) | Scan-history rows older than this duration are deleted at the end of each cycle, bounding the `scans` table and `/scans` view. |
 | **Scanner — per-subnet profile (each item in `scanner.profiles`)** | | |
 | `subnet` | required | CIDR for this profile. Must be unique. |
 | `scan_interval` | inherits global | Per-profile scan cadence. |

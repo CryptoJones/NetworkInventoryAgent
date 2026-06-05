@@ -17,6 +17,45 @@ _No unreleased changes._
 
 ---
 
+## 26.20 — 2026-06-05
+
+Scan-history retention. The `scans` table grew without bound: hosts had a
+`host_ttl` pruner, but completed scan records accumulated forever (≈105K
+rows/year at the 5-minute default), bloating the DB and the unbounded
+`/scans` view. This adds an optional retention policy mirroring host
+pruning. Post-backlog reliability work (no `Planning.md` number).
+
+### Added
+
+- **`scanner.scan_history_ttl` config** — when set, the end of each scan
+  cycle deletes scan rows whose `started_at` is older than `now - TTL`.
+  Zero (the default) keeps full history, so existing deployments are
+  unchanged.
+- **`store.ScanStore.DeleteBefore(ctx, cutoff)`** + its SQLite
+  implementation (`DELETE FROM scans WHERE started_at < ?`, returning the
+  row count) — a single bounded DELETE, not a list-then-delete loop.
+- **`inventory_scans_pruned_total`** Prometheus counter.
+
+### Changed
+
+- **The agent now runs a scan-history prune each cycle**, right after the
+  host prune (`Agent.pruneScans`). The `Agent` retains the `ScanStore`
+  passed to `New` for this; no constructor signature change.
+
+### Tests
+
+- `internal/sqlite/scan_test.go` — `DeleteBefore` removes only rows older
+  than the cutoff and reports the count; no-match returns 0.
+- `internal/agent/agent_test.go` — old scans pruned when TTL is set; full
+  history kept when TTL is 0.
+- `internal/config/config_test.go` — `scan_history_ttl` parses; default 0.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.19 — 2026-06-05
 
 Alert-sink URL validation. `watchdog.peer_addr` was scheme-validated at
