@@ -449,10 +449,13 @@ func (s *Scanner) udpScan(ctx context.Context, hostID int64, ip string, ts time.
 			if !ok {
 				return
 			}
-			// UDP banner-grabs are protocol-specific (DNS query
-			// for 53, SNMP get for 161, …). Out of scope here;
-			// Service stays empty for UDP for now.
-			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, "", ts)
+			// Protocol-specific fingerprint for well-known UDP ports
+			// (DNS/NTP today); other ports record an empty Service.
+			service := ""
+			if state == models.StateOpen {
+				service = udpFingerprint(ctx, ip, port, timeout)
+			}
+			s.upsertPort(ctx, hostID, ip, port, models.UDP, state, service, ts)
 			if state == models.StateOpen {
 				metrics.UDPProbeSuccessTotal.Inc()
 				mu.Lock()
