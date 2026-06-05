@@ -17,6 +17,42 @@ _No unreleased changes._
 
 ---
 
+## 26.33 — 2026-06-05
+
+Store-level pagination. The 26.25 admin pagination bounded the *rendered*
+page but still loaded the whole table into memory via `List`. The host and
+scan list pages now page at the database with `LIMIT`/`OFFSET`, so memory
+stays bounded on large deployments. Post-backlog reliability work (no
+`Planning.md` number).
+
+### Added
+
+- **`HostStore.ListPage` / `ScanStore.ListPage`** (+ `ScanStore.Count`) on
+  the store interface, with SQLite implementations (`LIMIT ? OFFSET ?`,
+  `limit <= 0` = no limit). `HostStore.Count` already existed.
+
+### Changed
+
+- **Admin `/hosts` and `/scans` handlers** now call `Count` + `ListPage`
+  instead of `List` + in-memory slicing; the unused `pageSlice` helper was
+  removed. The `?limit=`/`?offset=` contract and the pager UI are unchanged.
+
+### Tests
+
+- `internal/sqlite/host_test.go` / `scan_test.go` — `ListPage` windowing
+  (ordering, page boundaries, no-limit) and `Count`. Store mocks gained the
+  new methods.
+
+### Notes
+
+- The filterable `/api/v1/hosts` endpoint still lists-then-filters in memory
+  (its vendor/device/port filters don't map to a single SQL window); pushing
+  those into SQL is a separate, larger change.
+- `go test ./...`, `go vet ./...`, `golangci-lint run ./...` green;
+  darwin/linux/windows build.
+
+---
+
 ## 26.32 — 2026-06-05
 
 Windows MAC/vendor enrichment. ARP enrichment now covers all three major

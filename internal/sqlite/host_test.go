@@ -159,3 +159,34 @@ func TestHostRepo_Delete_CascadesToPorts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, ports, "ports should be cascade-deleted with their host")
 }
+
+func TestHostRepo_ListPage(t *testing.T) {
+	db := openTestDB(t)
+	ctx := t.Context()
+	for _, ip := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"} {
+		_, err := db.Hosts().Upsert(ctx, newTestHost(ip))
+		require.NoError(t, err)
+	}
+
+	n, err := db.Hosts().Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+
+	// Ordered by IP: page 1 of size 2.
+	page, err := db.Hosts().ListPage(ctx, 2, 0)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	assert.Equal(t, "10.0.0.1", page[0].IPAddress)
+	assert.Equal(t, "10.0.0.2", page[1].IPAddress)
+
+	// Page 2 has the remainder.
+	page, err = db.Hosts().ListPage(ctx, 2, 2)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, "10.0.0.3", page[0].IPAddress)
+
+	// limit<=0 means no limit.
+	page, err = db.Hosts().ListPage(ctx, 0, 0)
+	require.NoError(t, err)
+	assert.Len(t, page, 3)
+}

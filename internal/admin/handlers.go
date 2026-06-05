@@ -46,21 +46,27 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
-	hosts, err := s.hosts.List(r.Context())
-	if err != nil {
-		slog.Error("admin list hosts", "err", err)
-		http.Error(w, "failed to load hosts", http.StatusInternalServerError)
-		return
-	}
 	limit, offset, err := parsePagination(r.URL.Query())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	total, err := s.hosts.Count(r.Context())
+	if err != nil {
+		slog.Error("admin count hosts", "err", err)
+		http.Error(w, "failed to load hosts", http.StatusInternalServerError)
+		return
+	}
+	hosts, err := s.hosts.ListPage(r.Context(), limit, offset)
+	if err != nil {
+		slog.Error("admin list hosts", "err", err)
+		http.Error(w, "failed to load hosts", http.StatusInternalServerError)
+		return
+	}
 	s.render(w, "hosts", hostsData{
 		pageData: s.basePage("Hosts"),
-		Hosts:    pageSlice(hosts, offset, limit),
-		Pager:    newPager("/hosts", len(hosts), limit, offset),
+		Hosts:    hosts,
+		Pager:    newPager("/hosts", total, limit, offset),
 	})
 }
 
@@ -88,21 +94,27 @@ func (s *Server) handleHostDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleScans(w http.ResponseWriter, r *http.Request) {
-	scans, err := s.scans.List(r.Context())
-	if err != nil {
-		slog.Error("admin list scans", "err", err)
-		http.Error(w, "failed to load scans", http.StatusInternalServerError)
-		return
-	}
 	limit, offset, err := parsePagination(r.URL.Query())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	total, err := s.scans.Count(r.Context())
+	if err != nil {
+		slog.Error("admin count scans", "err", err)
+		http.Error(w, "failed to load scans", http.StatusInternalServerError)
+		return
+	}
+	scans, err := s.scans.ListPage(r.Context(), limit, offset)
+	if err != nil {
+		slog.Error("admin list scans", "err", err)
+		http.Error(w, "failed to load scans", http.StatusInternalServerError)
+		return
+	}
 	s.render(w, "scans", scansData{
 		pageData: s.basePage("Scans"),
-		Scans:    pageSlice(scans, offset, limit),
-		Pager:    newPager("/scans", len(scans), limit, offset),
+		Scans:    scans,
+		Pager:    newPager("/scans", total, limit, offset),
 	})
 }
 

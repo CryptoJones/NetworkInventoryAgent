@@ -76,6 +76,46 @@ func (r *ScanRepo) List(ctx context.Context) ([]*models.Scan, error) {
 	return scans, rows.Err()
 }
 
+func (r *ScanRepo) ListPage(ctx context.Context, limit, offset int) ([]*models.Scan, error) {
+	if limit <= 0 {
+		limit = -1 // SQLite: no limit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	const q = `
+		SELECT id, subnet, hosts_found, started_at, finished_at
+		FROM scans ORDER BY started_at DESC LIMIT ? OFFSET ?`
+
+	rows, err := r.reader.QueryContext(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list scans page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var scans []*models.Scan
+	for rows.Next() {
+		s := &models.Scan{}
+		var finishedAt sql.NullTime
+		if err := rows.Scan(&s.ID, &s.Subnet, &s.HostsFound, &s.StartedAt, &finishedAt); err != nil {
+			return nil, fmt.Errorf("scan list row: %w", err)
+		}
+		if finishedAt.Valid {
+			s.FinishedAt = &finishedAt.Time
+		}
+		scans = append(scans, s)
+	}
+	return scans, rows.Err()
+}
+
+func (r *ScanRepo) Count(ctx context.Context) (int, error) {
+	var n int
+	if err := r.reader.QueryRowContext(ctx, `SELECT count(*) FROM scans`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count scans: %w", err)
+	}
+	return n, nil
+}
+
 // DeleteBefore removes scans whose started_at is strictly older than cutoff
 // and returns the number of rows deleted.
 func (r *ScanRepo) DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error) {

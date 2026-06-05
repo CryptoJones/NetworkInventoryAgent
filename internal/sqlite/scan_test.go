@@ -169,3 +169,31 @@ func TestScanRepo_Create_PreservesFields(t *testing.T) {
 	assert.Equal(t, s.HostsFound, got.HostsFound)
 	assert.Equal(t, s.StartedAt.Unix(), got.StartedAt.Unix())
 }
+
+func TestScanRepo_ListPage_And_Count(t *testing.T) {
+	db := openTestDB(t)
+	ctx := t.Context()
+	base := time.Now().UTC().Truncate(time.Second)
+	for i, subnet := range []string{"10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"} {
+		s := newTestScan(subnet)
+		s.StartedAt = base.Add(time.Duration(i) * time.Minute) // newest = 10.0.2.0/24
+		_, err := db.Scans().Create(ctx, s)
+		require.NoError(t, err)
+	}
+
+	n, err := db.Scans().Count(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+
+	// Newest-first window.
+	page, err := db.Scans().ListPage(ctx, 2, 0)
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	assert.Equal(t, "10.0.2.0/24", page[0].Subnet, "most recent first")
+	assert.Equal(t, "10.0.1.0/24", page[1].Subnet)
+
+	page, err = db.Scans().ListPage(ctx, 2, 2)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	assert.Equal(t, "10.0.0.0/24", page[0].Subnet)
+}

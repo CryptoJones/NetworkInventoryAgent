@@ -115,18 +115,6 @@ func newPager(path string, total, limit, offset int) pager {
 	return p
 }
 
-// pageSlice returns the [offset, offset+limit) window of s, clamped to bounds.
-func pageSlice[T any](s []T, offset, limit int) []T {
-	if offset >= len(s) {
-		return nil
-	}
-	end := offset + limit
-	if end > len(s) {
-		end = len(s)
-	}
-	return s[offset:end]
-}
-
 type watchdogData struct {
 	pageData
 	Peer *health.PeerStatus

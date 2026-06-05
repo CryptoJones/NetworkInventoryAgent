@@ -92,6 +92,38 @@ func (r *HostRepo) List(ctx context.Context) ([]*models.Host, error) {
 	return hosts, rows.Err()
 }
 
+func (r *HostRepo) ListPage(ctx context.Context, limit, offset int) ([]*models.Host, error) {
+	if limit <= 0 {
+		limit = -1 // SQLite: no limit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	const q = `
+		SELECT id, ip_address, mac_address, hostname, os_fingerprint,
+		       vendor, device_type, first_seen, last_seen
+		FROM hosts ORDER BY ip_address LIMIT ? OFFSET ?`
+
+	rows, err := r.reader.QueryContext(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list hosts page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var hosts []*models.Host
+	for rows.Next() {
+		h := &models.Host{}
+		if err := rows.Scan(
+			&h.ID, &h.IPAddress, &h.MACAddress, &h.Hostname, &h.OSFingerprint,
+			&h.Vendor, &h.DeviceType, &h.FirstSeen, &h.LastSeen,
+		); err != nil {
+			return nil, fmt.Errorf("scan host row: %w", err)
+		}
+		hosts = append(hosts, h)
+	}
+	return hosts, rows.Err()
+}
+
 func (r *HostRepo) Count(ctx context.Context) (int, error) {
 	var n int
 	if err := r.reader.QueryRowContext(ctx, `SELECT count(*) FROM hosts`).Scan(&n); err != nil {

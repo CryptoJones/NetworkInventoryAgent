@@ -103,6 +103,26 @@ func (m *mockHostStore) List(_ context.Context) ([]*models.Host, error) {
 	return out, nil
 }
 
+func (m *mockHostStore) ListPage(_ context.Context, limit, offset int) ([]*models.Host, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*models.Host, 0, len(m.hosts))
+	for _, h := range m.hosts {
+		out = append(out, h)
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(out) {
+		return nil, nil
+	}
+	end := len(out)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return out[offset:end], nil
+}
+
 func (m *mockHostStore) Count(_ context.Context) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -168,6 +188,32 @@ func (m *mockScanStore) List(_ context.Context) ([]*models.Scan, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+func (m *mockScanStore) ListPage(_ context.Context, limit, offset int) ([]*models.Scan, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*models.Scan, 0, len(m.scans))
+	for _, s := range m.scans {
+		out = append(out, s)
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(out) {
+		return nil, nil
+	}
+	end := len(out)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return out[offset:end], nil
+}
+
+func (m *mockScanStore) Count(_ context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.scans), nil
 }
 
 func (m *mockScanStore) DeleteBefore(_ context.Context, cutoff time.Time) (int64, error) {
