@@ -141,7 +141,7 @@ func healthyStatus() health.Status {
 
 func newTestServer(t *testing.T, hosts *mockHostStore, ports *mockPortStore, scans *mockScanStore) *admin.Server {
 	t.Helper()
-	srv, err := admin.NewServer(":0", "test-agent", hosts, ports, scans, healthyStatus, nil)
+	srv, err := admin.NewServer(":0", "test-agent", hosts, ports, scans, healthyStatus, nil, admin.ServerOptions{})
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(func() {
@@ -162,7 +162,7 @@ func get(t *testing.T, srv *admin.Server, path string) *http.Response {
 // --- tests ---
 
 func TestNewServer_ParsesTemplates(t *testing.T) {
-	_, err := admin.NewServer(":0", "agent", &mockHostStore{}, &mockPortStore{}, &mockScanStore{}, healthyStatus, nil)
+	_, err := admin.NewServer(":0", "agent", &mockHostStore{}, &mockPortStore{}, &mockScanStore{}, healthyStatus, nil, admin.ServerOptions{})
 	require.NoError(t, err, "template parsing should succeed on a clean build")
 }
 
@@ -373,7 +373,7 @@ func TestAllPages_ContentType(t *testing.T) {
 }
 
 func TestServer_Shutdown(t *testing.T) {
-	srv, err := admin.NewServer(":0", "agent", &mockHostStore{}, &mockPortStore{}, &mockScanStore{}, healthyStatus, nil)
+	srv, err := admin.NewServer(":0", "agent", &mockHostStore{}, &mockPortStore{}, &mockScanStore{}, healthyStatus, nil, admin.ServerOptions{})
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 

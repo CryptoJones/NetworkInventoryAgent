@@ -4,13 +4,16 @@ import (
 	"crypto/subtle"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
-// middleware wraps the mux with three cross-cutting concerns:
+// middleware wraps the mux with four cross-cutting concerns:
 //   - per-request access logging (one slog record per response)
 //   - baseline security headers (defence-in-depth for the loopback console;
 //     non-trivial once operators bind it to 0.0.0.0)
+//   - shared-secret authentication (no-op when no token is configured, so the
+//     loopback default stays credential-free)
 //   - CSRF protection on state-changing methods (POST/PUT/PATCH/DELETE)
 //
 // CSP keeps 'unsafe-inline' for styles because the templates embed a single
@@ -30,6 +33,12 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				"base-uri 'none'; "+
 				"form-action 'self'; "+
 				"frame-ancestors 'none'")
+
+		if !s.checkAuth(r) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="inventory-admin"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 
 		if !s.checkCSRF(r) {
 			http.Error(w, "csrf token mismatch", http.StatusForbidden)
@@ -68,6 +77,29 @@ func (s *Server) checkCSRF(r *http.Request) bool {
 		got = r.PostFormValue("csrf")
 	}
 	return subtle.ConstantTimeCompare([]byte(got), []byte(s.csrfToken)) == 1
+}
+
+// checkAuth enforces the shared-secret gate on every request. It is a no-op
+// when the server was constructed without an auth token, so the loopback
+// default needs no credentials.
+//
+// The console is a browser UI, so two credential carriers are accepted: a
+// `Authorization: Bearer <token>` header (curl, the JSON API, exports) and
+// HTTP Basic auth with the token as the password and any username (so a
+// browser shows its native login dialog). Both are compared in constant time
+// to deny timing-based bisection of the token.
+func (s *Server) checkAuth(r *http.Request) bool {
+	if s.authToken == "" {
+		return true
+	}
+	want := []byte(s.authToken)
+	if got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		return subtle.ConstantTimeCompare([]byte(got), want) == 1
+	}
+	if _, pass, ok := r.BasicAuth(); ok {
+		return subtle.ConstantTimeCompare([]byte(pass), want) == 1
+	}
+	return false
 }
 
 // statusRecorder lets the access-log middleware capture the response status

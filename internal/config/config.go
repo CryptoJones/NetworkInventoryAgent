@@ -308,9 +308,17 @@ type HealthConfig struct {
 
 type AdminConfig struct {
 	// Addr is the address the admin web console listens on.
-	// Default is 127.0.0.1:9090 (loopback only). Bind to 0.0.0.0 only in
-	// trusted network environments, as the console is unauthenticated (OWASP A01/A05).
+	// Default is 127.0.0.1:9090 (loopback only). When bound off-loopback the
+	// agent refuses to start unless AuthToken is also set, because the console
+	// exposes the full inventory, exports, the JSON API, and POST /scan
+	// (OWASP A01/A05).
 	Addr string `json:"addr"`
+	// AuthToken is the shared secret required to reach the admin console when
+	// Addr is not a loopback bind. Clients authenticate with either
+	// `Authorization: Bearer <token>` (curl/API) or HTTP Basic auth using the
+	// token as the password (so browsers get a native login prompt). Leave
+	// empty (and the file chmod 600) for the loopback-only default deployment.
+	AuthToken string `json:"auth_token,omitempty"`
 }
 
 type WatchdogConfig struct {
@@ -429,7 +437,7 @@ func Load(path string) (*Config, error) {
 // token is readable by group or other. The SECURITY.md advice is chmod 600;
 // catching this at startup beats discovering it after a token leak.
 func (c *Config) checkSecretsPerm(path string, mode os.FileMode) error {
-	hasSecret := c.Health.AuthToken != "" || c.Watchdog.PeerToken != ""
+	hasSecret := c.Health.AuthToken != "" || c.Watchdog.PeerToken != "" || c.Admin.AuthToken != ""
 	if !hasSecret {
 		return nil
 	}
@@ -458,6 +466,9 @@ func (c *Config) validate() error {
 	}
 	if !isLoopbackBind(c.Health.Addr) && c.Health.AuthToken == "" {
 		return fmt.Errorf("health.addr %q is not loopback; set health.auth_token to gate /health and /status (the endpoints expose host counts; binding off-loopback without a token is OWASP A01/A05)", c.Health.Addr)
+	}
+	if !isLoopbackBind(c.Admin.Addr) && c.Admin.AuthToken == "" {
+		return fmt.Errorf("admin.addr %q is not loopback; set admin.auth_token (or INVENTORY_ADMIN_TOKEN) to gate the console, exports, JSON API, and POST /scan (binding off-loopback without a token is OWASP A01/A05)", c.Admin.Addr)
 	}
 	return nil
 }
@@ -517,6 +528,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("INVENTORY_PEER_TOKEN"); v != "" {
 		cfg.Watchdog.PeerToken = v
+	}
+	if v := os.Getenv("INVENTORY_ADMIN_TOKEN"); v != "" {
+		cfg.Admin.AuthToken = v
 	}
 	// Listener addresses also come from env so containerised deployments
 	// can repoint without rewriting the JSON file (e.g.

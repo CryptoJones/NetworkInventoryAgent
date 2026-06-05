@@ -3,6 +3,7 @@ package config_test
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -67,8 +68,10 @@ func TestLoad_ValidFile(t *testing.T) {
 
 func TestLoad_AdminConfig(t *testing.T) {
 	data := map[string]any{
-		"log":   map[string]any{"level": "info", "format": "text"},
-		"admin": map[string]any{"addr": "0.0.0.0:9090"},
+		"log": map[string]any{"level": "info", "format": "text"},
+		// An off-loopback bind now requires a token (see the off-loopback
+		// validation tests below); include one so this parse check passes.
+		"admin": map[string]any{"addr": "0.0.0.0:9090", "auth_token": "tok"},
 	}
 	cfg, err := config.Load(writeTempConfig(t, data))
 	require.NoError(t, err)
@@ -195,6 +198,49 @@ func TestLoad_InvalidPeerAddr_NoHost(t *testing.T) {
 	_, err := config.Load(writeTempConfig(t, data))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "peer_addr")
+}
+
+func TestLoad_AdminOffLoopbackWithoutToken_Error(t *testing.T) {
+	data := map[string]any{
+		"log":   map[string]any{"level": "info", "format": "text"},
+		"admin": map[string]any{"addr": "0.0.0.0:9090"},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "admin.addr")
+}
+
+func TestLoad_AdminOffLoopbackWithToken_OK(t *testing.T) {
+	data := map[string]any{
+		"log":   map[string]any{"level": "info", "format": "text"},
+		"admin": map[string]any{"addr": "0.0.0.0:9090", "auth_token": "tok"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "tok", cfg.Admin.AuthToken)
+}
+
+func TestLoad_AdminToken_EnvOverride(t *testing.T) {
+	t.Setenv("INVENTORY_ADMIN_ADDR", "0.0.0.0:9090")
+	t.Setenv("INVENTORY_ADMIN_TOKEN", "env-tok")
+
+	cfg, err := config.Load("/nonexistent/config.json")
+	require.NoError(t, err, "off-loopback admin bind is satisfied by the env token")
+	assert.Equal(t, "env-tok", cfg.Admin.AuthToken)
+}
+
+func TestLoad_AdminTokenWorldReadable_Error(t *testing.T) {
+	b, err := json.Marshal(map[string]any{
+		"log":   map[string]any{"level": "info", "format": "text"},
+		"admin": map[string]any{"addr": "127.0.0.1:9090", "auth_token": "tok"},
+	})
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(path, b, 0o644))
+
+	_, err = config.Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "chmod 600")
 }
 
 func TestDuration_UnmarshalJSON_String(t *testing.T) {
