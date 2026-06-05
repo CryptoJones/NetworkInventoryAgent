@@ -380,9 +380,9 @@ Each agent reads a JSON config file and then applies environment variable overri
 | **Tracing** | | |
 | `tracing.endpoint` | — | OTLP/HTTP collector URL. Empty = no-op exporter (instrumentation active, spans discarded). |
 | **Alerts** | | |
-| `alerts.webhook.url` | — | HTTP POST target for host.discovered / host.vanished events. |
+| `alerts.webhook.url` | — | HTTP POST target for host.discovered / host.vanished events. Must be `http`/`https`; scheme-validated at startup. |
 | `alerts.webhook.auth_header` | — | Verbatim `Authorization` header (e.g. `Bearer abc123`). |
-| `alerts.syslog.addr` | — | `udp://host:514` or `tcp://host:514`. RFC 5424. |
+| `alerts.syslog.addr` | — | `udp://host:514` or `tcp://host:514`. RFC 5424. Scheme-validated at startup. |
 | `alerts.syslog.tag` | `network-inventory` | APP-NAME field. |
 | `alerts.syslog.facility` | `16` (local0) | RFC 5424 facility number 0..23. |
 

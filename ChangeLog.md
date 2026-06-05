@@ -17,6 +17,42 @@ _No unreleased changes._
 
 ---
 
+## 26.19 — 2026-06-05
+
+Alert-sink URL validation. `watchdog.peer_addr` was scheme-validated at
+config load, but `alerts.webhook.url` was passed to the HTTP client with
+no validation at all — a typo or hostile config value like
+`file:///etc/passwd` or `gopher://…` reached the client verbatim. Syslog
+addresses were validated only when the sink dialed. This extends the
+existing peer-address guard to every outbound sink target (OWASP A10).
+Post-backlog security hardening (no `Planning.md` number).
+
+### Added
+
+- **`validateSinkURL`** in `internal/config` — a shared scheme/host check
+  used for both alert sinks.
+
+### Changed
+
+- **`alerts.webhook.url` is now scheme-validated at config load** —
+  rejected unless `http` or `https` with a non-empty host. The agent
+  refuses to start on an invalid value instead of failing silently on the
+  first event.
+- **`alerts.syslog.addr` is now scheme-validated at config load** too
+  (`udp`/`tcp` + host), giving a clear boot-time error before any network
+  dial is attempted. The eager-dial check in `NewSyslogSink` remains as
+  defence in depth.
+
+### Notes
+
+- Private/internal hosts are deliberately **not** blocked — internal
+  webhook receivers and localhost syslog are legitimate, common
+  deployments, consistent with `peer_addr` allowing loopback. The guard
+  targets scheme confusion, not network egress policy.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.18 — 2026-06-05
 
 Admin console authentication gate. The admin console — which serves the

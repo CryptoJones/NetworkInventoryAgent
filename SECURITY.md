@@ -52,7 +52,7 @@ The following table documents the project's posture against the [OWASP Top 10 (2
 | A07 | Auth Failures | ⚠️ Partial | Loopback-only defaults are unauthenticated by design. Off-loopback binds of both the health server and the admin console require a shared bearer/Basic token, enforced at startup; tokens are compared in constant time. |
 | A08 | Data Integrity | ✅ Pass | `go.sum` provides cryptographic verification of all module downloads. Config validation rejects malformed or unexpected values at startup. |
 | A09 | Logging & Monitoring | ✅ Pass | Structured `log/slog` output in text or JSON format. All three watchdog failure conditions (liveness, freshness, consistency) are logged at `WARN` or `ERROR` level with structured fields. |
-| A10 | SSRF | ✅ Pass | `peer_addr` is validated to `http`/`https` only at config load time. Response bodies from external HTTP calls are limited to 1 MiB via `io.LimitReader`. Scanner targets come from operator-controlled config, not external input. |
+| A10 | SSRF | ✅ Pass | All outbound targets are scheme-validated at config load: `watchdog.peer_addr` and `alerts.webhook.url` to `http`/`https`, `alerts.syslog.addr` to `udp`/`tcp`. This blocks scheme-confusion vectors (`file://`, `gopher://`, …) before the URL reaches a client. Response bodies from external HTTP calls are limited to 1 MiB via `io.LimitReader`. Scanner targets come from operator-controlled config, not external input. |
 
 ## OWASP AI Top 10
 
