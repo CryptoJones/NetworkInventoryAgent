@@ -201,6 +201,30 @@ func TestClassify(t *testing.T) {
 			want: "camera",
 		},
 		{
+			name:   "camera by hikvision vendor",
+			vendor: "Hikvision",
+			tcp:    []int{80, 443},
+			want:   "camera",
+		},
+		{
+			name:   "camera by dahua vendor",
+			vendor: "Dahua",
+			tcp:    []int{80},
+			want:   "camera",
+		},
+		{
+			name:   "nas by qnap vendor",
+			vendor: "QNAP",
+			tcp:    []int{80, 443},
+			want:   "nas",
+		},
+		{
+			name:   "embedded by espressif vendor",
+			vendor: "Espressif",
+			tcp:    []int{80},
+			want:   "embedded",
+		},
+		{
 			name: "no match returns empty",
 			tcp:  []int{4242},
 			want: "",

@@ -57,3 +57,20 @@ func TestOUIVendor_KnownPrefix(t *testing.T) {
 	// Mixed case input is normalised.
 	assert.Equal(t, "Apple", ouiVendor("A4:5E:60:11:22:33"))
 }
+
+func TestOUIVendor_AddedVendors(t *testing.T) {
+	// Each prefix verified against the IEEE registry (maclookup.app).
+	cases := map[string]string{
+		"44:19:b6:00:00:00": "Hikvision",
+		"3c:ef:8c:00:00:00": "Dahua",
+		"00:40:8c:00:00:00": "Axis",
+		"24:5e:be:00:00:00": "QNAP",
+		"fc:ec:da:00:00:00": "Ubiquiti",
+		"24:0a:c4:00:00:00": "Espressif",
+	}
+	for mac, want := range cases {
+		assert.Equal(t, want, ouiVendor(mac), mac)
+	}
+	// 00:08:9b is ICP Electronics, not QNAP — must not be mislabelled.
+	assert.NotEqual(t, "QNAP", ouiVendor("00:08:9b:00:00:00"))
+}

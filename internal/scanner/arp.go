@@ -166,4 +166,25 @@ var ouiTable = map[string]string{
 	"00:03:ba": "Sun/Oracle",
 	"00:14:4f": "Sun/Oracle",
 	"00:1b:24": "Sun/Oracle",
+	// IP-camera / NVR vendors (all prefixes verified against the IEEE
+	// registry via maclookup.app). Feed the "camera" classifier rule.
+	"44:19:b6": "Hikvision",
+	"c0:56:e3": "Hikvision",
+	"bc:ad:28": "Hikvision",
+	"3c:ef:8c": "Dahua",
+	"e0:50:8b": "Dahua",
+	"00:40:8c": "Axis",
+	"ac:cc:8e": "Axis",
+	// QNAP NAS — feeds the "nas" classifier rule. (Note: 00:08:9b is
+	// ICP Electronics, NOT QNAP — deliberately excluded.)
+	"24:5e:be": "QNAP",
+	// Ubiquiti network gear (APs / switches / gateways / cameras).
+	"fc:ec:da": "Ubiquiti",
+	"78:8a:20": "Ubiquiti",
+	"dc:9f:db": "Ubiquiti",
+	// Espressif (ESP8266/ESP32) — the silicon behind most DIY IoT;
+	// feeds the "embedded" classifier rule.
+	"24:0a:c4": "Espressif",
+	"30:ae:a4": "Espressif",
+	"18:fe:34": "Espressif",
 }

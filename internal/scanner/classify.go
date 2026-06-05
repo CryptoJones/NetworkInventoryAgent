@@ -85,7 +85,8 @@ func classify(vendor, osfp string, tcp, udp []int) string {
 	// Vendor OUI pins Synology / Western Digital; otherwise NFS (2049)
 	// alongside SMB (445) is the NAS signature. Must precede the Windows
 	// SMB rule below so a NAS isn't mislabelled windows-host.
-	if strings.Contains(vlow, "synology") || strings.Contains(vlow, "western digital") {
+	if strings.Contains(vlow, "synology") || strings.Contains(vlow, "western digital") ||
+		strings.Contains(vlow, "qnap") {
 		return "nas"
 	}
 	if tcpSet[2049] && tcpSet[445] {
@@ -138,13 +139,18 @@ func classify(vendor, osfp string, tcp, udp []int) string {
 	if tcpSet[1883] || tcpSet[8883] {
 		return "iot-broker"
 	}
-	if strings.Contains(vlow, "raspberry pi") {
+	if strings.Contains(vlow, "raspberry pi") || strings.Contains(vlow, "espressif") {
 		return "embedded"
 	}
 
 	// ── IP cameras / NVR ──────────────────────────────────────────
-	// RTSP (554) is the unambiguous video signal. Outside the default
-	// deep-probe list; fires when an operator probes it.
+	// Vendor OUI pins the major video brands; otherwise RTSP (554) is the
+	// unambiguous signal (outside the default deep-probe list, so it fires
+	// when an operator probes it).
+	if strings.Contains(vlow, "hikvision") || strings.Contains(vlow, "dahua") ||
+		strings.Contains(vlow, "axis") {
+		return "camera"
+	}
 	if tcpSet[554] {
 		return "camera"
 	}
