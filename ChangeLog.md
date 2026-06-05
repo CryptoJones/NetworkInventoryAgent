@@ -17,6 +17,42 @@ _No unreleased changes._
 
 ---
 
+## 26.23 — 2026-06-05
+
+Device-classifier expansion. Several common asset classes previously fell
+through to the generic `appliance` tag (or no tag). The classifier gains
+five new categories, built only on signals already available (NIC OUI +
+open ports) — no dead vendor strings. Post-backlog feature work (no
+`Planning.md` number).
+
+### Added
+
+- **`nas`** — Synology / Western Digital by NIC OUI, or NFS (2049) +
+  SMB (445). Fires before the Windows SMB rule so a NAS isn't mislabelled
+  `windows-host`.
+- **`hypervisor`** — now also matches QEMU/KVM, VirtualBox, and Microsoft
+  Hyper-V by OUI, and Proxmox VE by its 8006 management port (previously
+  only VMware-by-ports).
+- **`kubernetes-node`** — kube-apiserver (6443), etcd (2379), or kubelet
+  (10250).
+- **`container-host`** — Docker daemon (2375/2376).
+- **`camera`** — RTSP (554).
+
+### Tests
+
+- `internal/scanner/classify_test.go` — cases for each new category plus a
+  regression that SMB alone is still `windows-host` (not `nas`).
+
+### Notes
+
+- The Kubernetes/Docker/Proxmox/RTSP ports sit outside the default
+  deep-probe list, so those labels fire when an operator adds the ports via
+  a per-subnet `deep_probe_ports` profile; NAS-by-NFS+SMB and the OUI-based
+  rules fire under the default configuration.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.22 — 2026-06-05
 
 Test-coverage fill for previously untested units. No behaviour change.
