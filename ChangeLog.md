@@ -17,6 +17,32 @@ _No unreleased changes._
 
 ---
 
+## 26.22 — 2026-06-05
+
+Test-coverage fill for previously untested units. No behaviour change.
+Post-backlog quality work (no `Planning.md` number).
+
+### Tests
+
+- **`internal/logging`** — `0% → 100%`. Level parsing (debug/info/warn/
+  error + unknown→info fallback), JSON vs text handler selection, and the
+  `agent` field injection, via a captured-stdout helper.
+- **`internal/health/client.go`** — the watchdog peer client had no test
+  file. Added `Ping` (200 / non-200 / bearer-token / connection error)
+  and `FetchStatus` (decode OK / bad JSON) coverage.
+- **`internal/admin`** — covered the previously untested handlers:
+  `handleWatchdog` (with and without a peer) and `handleScanTrigger`
+  (not-wired → 501, success → 204, already-pending → 503), plus the CSRF
+  rejection path on `POST /scan` (missing token → 403).
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+  Package coverage after this change: logging 100%, health 79.6%, admin
+  74.1%, scanner 71.7%.
+
+---
+
 ## 26.21 — 2026-06-05
 
 Service fingerprinting for PostgreSQL, Redis, and Memcached. These ports
