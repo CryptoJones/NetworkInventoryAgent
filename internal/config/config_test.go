@@ -243,6 +243,56 @@ func TestLoad_AdminTokenWorldReadable_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "chmod 600")
 }
 
+func TestLoad_WebhookURL_BadScheme(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"webhook": map[string]any{"url": "file:///etc/passwd"}},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "alerts.webhook.url")
+}
+
+func TestLoad_WebhookURL_NoHost(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"webhook": map[string]any{"url": "https://"}},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "alerts.webhook.url")
+}
+
+func TestLoad_WebhookURL_Valid(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"webhook": map[string]any{"url": "https://hook.example.com/events"}},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "https://hook.example.com/events", cfg.Alerts.Webhook.URL)
+}
+
+func TestLoad_SyslogAddr_BadScheme(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"syslog": map[string]any{"addr": "http://syslog.example:514"}},
+	}
+	_, err := config.Load(writeTempConfig(t, data))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "alerts.syslog.addr")
+}
+
+func TestLoad_SyslogAddr_Valid(t *testing.T) {
+	data := map[string]any{
+		"log":    map[string]any{"level": "info", "format": "text"},
+		"alerts": map[string]any{"syslog": map[string]any{"addr": "udp://syslog.example:514"}},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, "udp://syslog.example:514", cfg.Alerts.Syslog.Addr)
+}
+
 func TestDuration_UnmarshalJSON_String(t *testing.T) {
 	var d config.Duration
 	require.NoError(t, json.Unmarshal([]byte(`"5m"`), &d))

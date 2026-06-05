@@ -470,6 +470,16 @@ func (c *Config) validate() error {
 	if !isLoopbackBind(c.Admin.Addr) && c.Admin.AuthToken == "" {
 		return fmt.Errorf("admin.addr %q is not loopback; set admin.auth_token (or INVENTORY_ADMIN_TOKEN) to gate the console, exports, JSON API, and POST /scan (binding off-loopback without a token is OWASP A01/A05)", c.Admin.Addr)
 	}
+	if c.Alerts.Webhook.URL != "" {
+		if err := validateSinkURL(c.Alerts.Webhook.URL, "http", "https"); err != nil {
+			return fmt.Errorf("alerts.webhook.url: %w", err)
+		}
+	}
+	if c.Alerts.Syslog.Addr != "" {
+		if err := validateSinkURL(c.Alerts.Syslog.Addr, "udp", "tcp"); err != nil {
+			return fmt.Errorf("alerts.syslog.addr: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -508,6 +518,29 @@ func validatePeerAddr(raw string) error {
 		return fmt.Errorf("missing host in %q", raw)
 	}
 	return nil
+}
+
+// validateSinkURL rejects alert-sink targets (webhook.url, syslog.addr) whose
+// scheme is not in the allowed set, or that carry no host. This is the same
+// scheme-confusion guard applied to watchdog.peer_addr (OWASP A10): without it
+// a webhook URL like file:///etc/passwd or gopher://… reaches the HTTP client
+// verbatim. It does not block private/internal hosts — internal receivers
+// (an in-cluster collector, localhost) are a legitimate, common deployment.
+func validateSinkURL(raw string, schemes ...string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", raw, err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	for _, allowed := range schemes {
+		if scheme == allowed {
+			if u.Host == "" {
+				return fmt.Errorf("missing host in %q", raw)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("scheme %q not allowed; must be one of %v", scheme, schemes)
 }
 
 func applyEnv(cfg *Config) {
