@@ -241,9 +241,9 @@ Each agent automatically starts a browser-based admin console alongside the scan
 | Page | URL | Description |
 |------|-----|-------------|
 | Dashboard | `/` | Summary cards and latest 10 scans and hosts; auto-refreshes every 30 s |
-| Host inventory | `/hosts` | Full list of all discovered hosts with metadata |
+| Host inventory | `/hosts` | List of discovered hosts with metadata; paginated (`?limit=`, `?offset=`, default 100) |
 | Host detail | `/hosts/{ip}` | Per-host metadata and open port table |
-| Scan history | `/scans` | All subnet sweeps with duration and status |
+| Scan history | `/scans` | Subnet sweeps with duration and status; paginated (`?limit=`, `?offset=`, default 100) |
 
 ### Terminal UI console
 
@@ -442,9 +442,9 @@ Both agents expose two HTTP endpoints used by the watchdog and for external moni
 | Endpoint | Method | Response |
 |----------|--------|----------|
 | `/` | GET | HTML dashboard |
-| `/hosts` | GET | HTML host inventory |
+| `/hosts` | GET | HTML host inventory (paginated: `?limit=`, `?offset=`) |
 | `/hosts/{ip}` | GET | HTML host detail (with ports) |
-| `/scans` | GET | HTML scan history |
+| `/scans` | GET | HTML scan history (paginated: `?limit=`, `?offset=`) |
 | `/watchdog` | GET | HTML watchdog peer-status panel |
 | `/export.json` | GET | Full inventory snapshot as JSON |
 | `/export.csv` | GET | Full inventory snapshot as CSV |

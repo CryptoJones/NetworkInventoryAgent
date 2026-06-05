@@ -17,6 +17,42 @@ _No unreleased changes._
 
 ---
 
+## 26.25 — 2026-06-05
+
+Pagination for the admin host and scan list pages. `/hosts` and `/scans`
+rendered every row in one response — a deployment with tens of thousands of
+hosts produced a multi-megabyte HTML page. Both pages now paginate with the
+same `?limit=`/`?offset=` convention as the JSON API. Post-backlog
+reliability work (no `Planning.md` number).
+
+### Added
+
+- **`?limit=` / `?offset=` on `/hosts` and `/scans`** (default 100, capped
+  at 1000), reusing the API's `parsePagination`. Prev/Next controls and a
+  "Showing X–Y of N" indicator render via a shared `pager` template
+  partial; the controls hide when everything fits on one page.
+- **`pager` type + `newPager` / `pageSlice` helpers** in `internal/admin`.
+
+### Changed
+
+- **The host-inventory subtitle now reports the full total**, not the
+  current page size.
+
+### Tests
+
+- `internal/admin/handlers_extra_test.go` — page windowing (rows in/out of
+  range), Prev/Next link targets, total reporting, and an invalid `limit`
+  → 400.
+
+### Notes
+
+- This bounds the rendered page size. The underlying `store.List` still
+  loads the full slice before windowing; pushing `LIMIT`/`OFFSET` into the
+  store interface is a larger change left for later.
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.24 — 2026-06-05
 
 UDP service fingerprinting. The scanner recorded open UDP ports but left
