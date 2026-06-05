@@ -142,6 +142,65 @@ func TestClassify(t *testing.T) {
 			want: "linux-host",
 		},
 		{
+			name:   "nas by synology vendor",
+			vendor: "Synology",
+			tcp:    []int{80, 443, 5000},
+			want:   "nas",
+		},
+		{
+			name:   "nas by western digital vendor",
+			vendor: "Western Digital",
+			tcp:    []int{80},
+			want:   "nas",
+		},
+		{
+			name: "nas by nfs plus smb",
+			tcp:  []int{445, 2049},
+			want: "nas",
+		},
+		{
+			name: "smb alone is still windows-host (not nas)",
+			tcp:  []int{445},
+			want: "windows-host",
+		},
+		{
+			name:   "hypervisor by qemu/kvm vendor",
+			vendor: "QEMU/KVM",
+			tcp:    []int{22},
+			want:   "hypervisor",
+		},
+		{
+			name:   "hypervisor by virtualbox vendor",
+			vendor: "VirtualBox",
+			tcp:    []int{22},
+			want:   "hypervisor",
+		},
+		{
+			name: "hypervisor by proxmox 8006",
+			tcp:  []int{22, 8006},
+			want: "hypervisor",
+		},
+		{
+			name: "kubernetes node by apiserver 6443",
+			tcp:  []int{6443},
+			want: "kubernetes-node",
+		},
+		{
+			name: "kubernetes node by kubelet 10250",
+			tcp:  []int{10250},
+			want: "kubernetes-node",
+		},
+		{
+			name: "container host by docker daemon 2375",
+			tcp:  []int{2375},
+			want: "container-host",
+		},
+		{
+			name: "camera by rtsp 554",
+			tcp:  []int{80, 554},
+			want: "camera",
+		},
+		{
 			name: "no match returns empty",
 			tcp:  []int{4242},
 			want: "",
