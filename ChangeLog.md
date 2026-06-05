@@ -17,6 +17,50 @@ _No unreleased changes._
 
 ---
 
+## 26.29 — 2026-06-05
+
+macOS MAC/vendor enrichment. ARP enrichment was Linux-only (`/proc/net/arp`);
+on macOS the `MACAddress`/`Vendor` fields were always empty. This adds a
+macOS neighbour lookup **without invoking a shell** — it reads the routing
+table via a routing socket (`golang.org/x/net/route`), preserving the
+project's "no external processes are invoked" posture (OWASP A03).
+Post-backlog feature work (no `Planning.md` number).
+
+### Added
+
+- **macOS neighbour resolution** (`arp_darwin.go`) — dumps the routing
+  information base and returns the link-layer address for a target IP.
+  Verified on a live host against `arp -n`.
+- **`golang.org/x/net`** promoted from an indirect to a direct dependency
+  (already in the module graph; still pure Go, no cgo).
+
+### Changed
+
+- **`arp.go` refactored for portability**: the `/proc/net/arp` parser is now
+  `parseProcARP` (pure, testable on any OS); `lookupARP` consults it first,
+  then a platform `neighbourMAC` (`arp_darwin.go` for macOS,
+  `arp_fallback.go` returning "" for Linux/Windows/other — Linux is fully
+  served by the proc path).
+
+### Tests
+
+- `internal/scanner/arp_test.go` — parser tests rewritten around
+  `parseProcARP`; a cross-platform `lookupARP` happy-path test via a proc
+  fixture.
+- `internal/scanner/arp_darwin_test.go` — validates `neighbourMAC` against
+  the live routing table (skips when no neighbour entries exist) and the
+  no-match/bad-input paths.
+
+### Notes
+
+- Windows neighbour enrichment remains a graceful no-op (no
+  `GetIpNetTable` implementation yet); it degrades to vendor-less inventory
+  rather than guessing.
+- Builds verified for darwin, linux, and windows; `go test ./...`,
+  `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.28 — 2026-06-05
 
 JSON scan-history API. The query API exposed hosts but not scans;
