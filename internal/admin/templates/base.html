@@ -61,8 +61,24 @@ tbody tr:hover td{background:#1c2128}
 .btn:hover{background:#2ea043}
 .btn-link{display:inline-block;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:13px;font-weight:600;text-decoration:none}
 .btn-link:hover{background:#30363d;text-decoration:none}
+.btn-link.disabled{opacity:.4;pointer-events:none}
+.pager{display:flex;align-items:center;justify-content:space-between;margin-top:16px}
+.pager-info{color:#8b949e;font-size:12px}
+.pager-links{display:flex;gap:8px}
 </style>
 </head>
+{{end}}
+
+{{define "pager"}}
+{{if gt .Total .Limit}}
+<div class="pager">
+  <span class="pager-info">Showing {{.From}}–{{.To}} of {{.Total}}</span>
+  <span class="pager-links">
+    {{if .HasPrev}}<a class="btn-link" href="{{.PagePath}}?limit={{.Limit}}&offset={{.PrevOffset}}">‹ Prev</a>{{else}}<span class="btn-link disabled">‹ Prev</span>{{end}}
+    {{if .HasNext}}<a class="btn-link" href="{{.PagePath}}?limit={{.Limit}}&offset={{.NextOffset}}">Next ›</a>{{else}}<span class="btn-link disabled">Next ›</span>{{end}}
+  </span>
+</div>
+{{end}}
 {{end}}
 
 {{define "nav"}}

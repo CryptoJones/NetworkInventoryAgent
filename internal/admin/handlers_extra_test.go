@@ -2,6 +2,7 @@ package admin_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Ronin48/NetworkInventoryAgent/internal/admin"
 	"github.com/Ronin48/NetworkInventoryAgent/internal/health"
+	"github.com/Ronin48/NetworkInventoryAgent/models"
 )
 
 // newServerWithTrigger starts an admin server wired with the given trigger.
@@ -109,4 +111,54 @@ func TestHandleScanTrigger_MissingCSRF(t *testing.T) {
 	resp := postScan(t, srv, "") // no token
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "POST without CSRF token must be rejected")
+}
+
+func TestHandleHosts_Pagination(t *testing.T) {
+	var hosts []*models.Host
+	for i := 1; i <= 5; i++ {
+		hosts = append(hosts, &models.Host{
+			ID: int64(i), IPAddress: fmt.Sprintf("10.0.0.%d", i), LastSeen: time.Now(),
+		})
+	}
+	srv := newTestServer(t, &mockHostStore{hosts: hosts}, &mockPortStore{}, &mockScanStore{})
+
+	// First page: two rows, a Next link, the true total in the subtitle.
+	resp := get(t, srv, "/hosts?limit=2&offset=0")
+	defer func() { _ = resp.Body.Close() }()
+	body := readBody(t, resp)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, body, "of 5", "subtitle/pager should report the full total")
+	assert.Contains(t, body, "10.0.0.1")
+	assert.Contains(t, body, "10.0.0.2")
+	assert.NotContains(t, body, "10.0.0.3", "row beyond the page must not render")
+	assert.Contains(t, body, "/hosts?limit=2&offset=2", "Next link to the second page")
+
+	// Last page: final row, no Next target.
+	resp2 := get(t, srv, "/hosts?limit=2&offset=4")
+	defer func() { _ = resp2.Body.Close() }()
+	body2 := readBody(t, resp2)
+	assert.Contains(t, body2, "10.0.0.5")
+	assert.Contains(t, body2, "/hosts?limit=2&offset=2", "Prev link back to page two")
+	assert.NotContains(t, body2, "offset=6", "no Next link past the end")
+}
+
+func TestHandleHosts_InvalidLimit(t *testing.T) {
+	srv := newTestServer(t, &mockHostStore{}, &mockPortStore{}, &mockScanStore{})
+	resp := get(t, srv, "/hosts?limit=0")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestHandleScans_Pagination(t *testing.T) {
+	var scans []*models.Scan
+	for i := 1; i <= 3; i++ {
+		scans = append(scans, &models.Scan{ID: int64(i), Subnet: fmt.Sprintf("10.0.%d.0/24", i), StartedAt: time.Now()})
+	}
+	srv := newTestServer(t, &mockHostStore{}, &mockPortStore{}, &mockScanStore{scans: scans})
+	resp := get(t, srv, "/scans?limit=2&offset=0")
+	defer func() { _ = resp.Body.Close() }()
+	body := readBody(t, resp)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, body, "of 3")
+	assert.Contains(t, body, "/scans?limit=2&offset=2", "Next link present")
 }

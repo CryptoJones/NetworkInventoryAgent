@@ -4,7 +4,7 @@
 {{template "nav" .}}
 <main>
   <h1>Host Inventory</h1>
-  <p class="subtitle">{{len .Hosts}} hosts discovered across all scanned subnets</p>
+  <p class="subtitle">{{.Pager.Total}} hosts discovered across all scanned subnets</p>
 
   {{if .Hosts}}
   <table>
@@ -38,6 +38,7 @@
   {{else}}
   <div class="empty">No hosts discovered yet. Scans may still be running.</div>
   {{end}}
+  {{template "pager" .Pager}}
 </main>
 </body>
 </html>
