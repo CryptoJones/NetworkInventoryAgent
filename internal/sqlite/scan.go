@@ -75,3 +75,17 @@ func (r *ScanRepo) List(ctx context.Context) ([]*models.Scan, error) {
 	}
 	return scans, rows.Err()
 }
+
+// DeleteBefore removes scans whose started_at is strictly older than cutoff
+// and returns the number of rows deleted.
+func (r *ScanRepo) DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := r.writer.ExecContext(ctx, `DELETE FROM scans WHERE started_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete scans before %s: %w", cutoff.Format(time.RFC3339), err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete scans rows affected: %w", err)
+	}
+	return n, nil
+}

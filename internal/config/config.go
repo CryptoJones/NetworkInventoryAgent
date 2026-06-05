@@ -125,6 +125,12 @@ type ScannerConfig struct {
 	// stale. Zero disables pruning. Pruning runs at the end of each scan
 	// cycle and DELETEs rows where last_seen < now - HostTTL*ScanInterval.
 	HostTTL Duration `json:"host_ttl,omitempty"`
+	// ScanHistoryTTL bounds how long completed scan records are retained.
+	// Zero (the default) keeps history forever. When set, the end of each
+	// cycle DELETEs scan rows whose started_at is older than now -
+	// ScanHistoryTTL, so the scans table and the /scans view stay bounded
+	// on long-running deployments.
+	ScanHistoryTTL Duration `json:"scan_history_ttl,omitempty"`
 	// DeepProbe enables a second-pass scan of DeepProbePorts on every host
 	// confirmed alive by the liveness probe. Disabled by default — operators
 	// must opt in because the worst case wall-clock budget per host grows

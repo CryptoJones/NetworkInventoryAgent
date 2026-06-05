@@ -243,6 +243,21 @@ func TestLoad_AdminTokenWorldReadable_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "chmod 600")
 }
 
+func TestLoad_ScanHistoryTTL(t *testing.T) {
+	data := map[string]any{
+		"log":     map[string]any{"level": "info", "format": "text"},
+		"scanner": map[string]any{"scan_history_ttl": "168h"},
+	}
+	cfg, err := config.Load(writeTempConfig(t, data))
+	require.NoError(t, err)
+	assert.Equal(t, 168*time.Hour, cfg.Scanner.ScanHistoryTTL.Duration)
+}
+
+func TestDefault_ScanHistoryTTL_DisabledByDefault(t *testing.T) {
+	cfg := config.Default()
+	assert.Equal(t, time.Duration(0), cfg.Scanner.ScanHistoryTTL.Duration, "retention off by default")
+}
+
 func TestLoad_WebhookURL_BadScheme(t *testing.T) {
 	data := map[string]any{
 		"log":    map[string]any{"level": "info", "format": "text"},

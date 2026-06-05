@@ -128,6 +128,19 @@ func (m *mockScanStore) List(_ context.Context) ([]*models.Scan, error) {
 	return out, nil
 }
 
+func (m *mockScanStore) DeleteBefore(_ context.Context, cutoff time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var deleted int64
+	for id, s := range m.scans {
+		if s.StartedAt.Before(cutoff) {
+			delete(m.scans, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 func (m *mockScanStore) get(id int64) *models.Scan {
 	m.mu.Lock()
 	defer m.mu.Unlock()

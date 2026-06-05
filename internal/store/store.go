@@ -55,4 +55,9 @@ type ScanStore interface {
 
 	// List returns all scans ordered by started_at descending (newest first).
 	List(ctx context.Context) ([]*models.Scan, error)
+
+	// DeleteBefore removes scan records whose started_at is strictly older
+	// than cutoff and returns the number deleted. Used by the scan-history
+	// retention pruner; the disabled (zero-TTL) case is handled by the caller.
+	DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error)
 }

@@ -129,6 +129,25 @@ func (m *mockScanStore) List(_ context.Context) ([]*models.Scan, error) {
 	return m.scans, m.err
 }
 
+func (m *mockScanStore) DeleteBefore(_ context.Context, cutoff time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return 0, m.err
+	}
+	kept := m.scans[:0]
+	var deleted int64
+	for _, s := range m.scans {
+		if s.StartedAt.Before(cutoff) {
+			deleted++
+			continue
+		}
+		kept = append(kept, s)
+	}
+	m.scans = kept
+	return deleted, nil
+}
+
 // --- helpers ---
 
 func healthyStatus() health.Status {

@@ -170,6 +170,19 @@ func (m *mockScanStore) List(_ context.Context) ([]*models.Scan, error) {
 	return out, nil
 }
 
+func (m *mockScanStore) DeleteBefore(_ context.Context, cutoff time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var deleted int64
+	for id, s := range m.scans {
+		if s.StartedAt.Before(cutoff) {
+			delete(m.scans, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 // --- tests ---
 
 // TestAgent_TriggerCoalesces verifies the buffered trigger channel: the first
@@ -320,6 +333,67 @@ func TestAgent_PruneDisabledWithoutTTL(t *testing.T) {
 	remaining, err := hosts.List(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, remaining, 1, "with HostTTL=0 no pruning should happen")
+}
+
+// TestAgent_PrunesOldScans verifies the ScanHistoryTTL retention logic.
+func TestAgent_PrunesOldScans(t *testing.T) {
+	scans := newMockScanStore()
+	_, err := scans.Create(context.Background(), &models.Scan{Subnet: "10.0.0.0/24", StartedAt: time.Now()})
+	require.NoError(t, err)
+	_, err = scans.Create(context.Background(), &models.Scan{Subnet: "10.0.0.0/24", StartedAt: time.Now().Add(-24 * time.Hour)})
+	require.NoError(t, err)
+
+	a, err := agent.New(
+		"test",
+		config.ScannerConfig{
+			Subnets:        nil,
+			ScanInterval:   config.Duration{Duration: 50 * time.Millisecond},
+			ScanHistoryTTL: config.Duration{Duration: 1 * time.Hour},
+		},
+		newMockHostStore(),
+		mockPortStore{},
+		scans,
+		health.NewTracker("test"),
+		nil,
+	)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	a.Run(ctx)
+
+	remaining, err := scans.List(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, remaining, 1, "the scan older than ScanHistoryTTL should have been pruned")
+}
+
+// TestAgent_ScanPruneDisabledWithoutTTL verifies scan retention is off by default.
+func TestAgent_ScanPruneDisabledWithoutTTL(t *testing.T) {
+	scans := newMockScanStore()
+	_, _ = scans.Create(context.Background(), &models.Scan{Subnet: "10.0.0.0/24", StartedAt: time.Now().Add(-24 * time.Hour)})
+
+	a, err := agent.New(
+		"test",
+		config.ScannerConfig{
+			Subnets:      nil,
+			ScanInterval: config.Duration{Duration: 50 * time.Millisecond},
+			// ScanHistoryTTL left zero
+		},
+		newMockHostStore(),
+		mockPortStore{},
+		scans,
+		health.NewTracker("test"),
+		nil,
+	)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	a.Run(ctx)
+
+	remaining, err := scans.List(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, remaining, 1, "with ScanHistoryTTL=0 no scan pruning should happen")
 }
 
 // TestAgent_EmitsHostVanishedOnPrune verifies that a host pruned via

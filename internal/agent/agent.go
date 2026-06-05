@@ -22,6 +22,7 @@ type Agent struct {
 	name    string
 	cfg     config.ScannerConfig
 	hosts   store.HostStore
+	scans   store.ScanStore
 	scanner *scanner.Scanner
 	tracker *health.Tracker
 	alerts  alerts.Emitter
@@ -64,6 +65,7 @@ func New(
 		name:  name,
 		cfg:   cfg,
 		hosts: hosts,
+		scans: scans,
 		scanner: scanner.New(scanner.Options{
 			Hosts:          hosts,
 			Ports:          ports,
@@ -205,6 +207,11 @@ func (a *Agent) runCycle(ctx context.Context, log *slog.Logger, forceAll bool) {
 		log.Info("pruned stale hosts", "count", pruned)
 	}
 
+	if pruned := a.pruneScans(ctx, log, started); pruned > 0 {
+		metrics.ScansPrunedTotal.Add(pruned)
+		log.Info("pruned old scan history", "count", pruned)
+	}
+
 	// Diff and fire events. Only meaningful when the cycle didn't
 	// itself fail mid-way — declaring hosts "vanished" because of a
 	// transient DB error would be alert spam.
@@ -275,6 +282,26 @@ func (a *Agent) pruneStale(ctx context.Context, log *slog.Logger, now time.Time)
 		}
 	}
 	return pruned
+}
+
+// pruneScans deletes scan-history rows older than the configured
+// ScanHistoryTTL and returns the number removed. Disabled when
+// ScanHistoryTTL is 0 (the default), so existing deployments keep full
+// history. Unlike host pruning this is a single bounded DELETE, not a
+// list-then-delete loop.
+func (a *Agent) pruneScans(ctx context.Context, log *slog.Logger, now time.Time) int64 {
+	ttl := a.cfg.ScanHistoryTTL.Duration
+	if ttl <= 0 {
+		return 0
+	}
+	cutoff := now.Add(-ttl)
+	n, err := a.scans.DeleteBefore(ctx, cutoff)
+	if err != nil {
+		metrics.DBErrorsTotal.Inc()
+		log.Warn("prune: delete old scans failed", "err", err)
+		return 0
+	}
+	return n
 }
 
 // snapshotByIP lists the current host inventory keyed by IP. Used pre-

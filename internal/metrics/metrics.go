@@ -162,6 +162,7 @@ var (
 	WatchdogFailuresTotal = Default.Counter("inventory_watchdog_failures_total", "Watchdog ticks where the peer was unreachable")
 	WatchdogPeerDownTotal = Default.Counter("inventory_watchdog_peer_down_total", "Times the peer has been declared DOWN")
 	HostsPrunedTotal      = Default.Counter("inventory_hosts_pruned_total", "Hosts deleted by the staleness pruner")
+	ScansPrunedTotal      = Default.Counter("inventory_scans_pruned_total", "Scan-history rows deleted by the retention pruner")
 	ScanTriggersTotal     = Default.Counter("inventory_scan_triggers_total", "On-demand scans accepted via POST /scan")
 
 	HostCount = Default.Gauge("inventory_host_count", "Current number of hosts in the inventory")
