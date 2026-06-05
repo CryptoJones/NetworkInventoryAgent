@@ -17,6 +17,42 @@ _No unreleased changes._
 
 ---
 
+## 26.24 — 2026-06-05
+
+UDP service fingerprinting. The scanner recorded open UDP ports but left
+`Port.Service` empty (an in-code "out of scope" note); a DNS resolver and a
+plain open UDP port were indistinguishable in the inventory. UDP ports
+confirmed open are now fingerprinted for the two highest-value protocols.
+Post-backlog feature work (no `Planning.md` number).
+
+### Added
+
+- **DNS fingerprint** — sends a standard A query for the root and confirms
+  the reply is a DNS response (QR bit set, transaction ID echoed) →
+  `DNS`. Identifies the service regardless of the answer (REFUSED still
+  proves DNS).
+- **NTP fingerprint** — sends an NTPv3 client request and checks the reply
+  is server mode → `NTP`, with the stratum appended when valid
+  (`NTP (stratum 2)`).
+- **`udpFingerprint` / `udpExchange`** helpers in a new `udp_banner.go`.
+
+### Changed
+
+- **`udpScan` now fingerprints open UDP ports** (ports 53/123 today; others
+  still record an empty Service). One extra datagram per matched open port.
+
+### Tests
+
+- `internal/scanner/udp_banner_test.go` — DNS identified / not-DNS, NTP with
+  stratum / non-server mode, unfingerprinted port, and the no-responder
+  timeout, via a UDP test responder.
+
+### Notes
+
+- `go test ./...`, `go vet ./...`, and `golangci-lint run ./...` all green.
+
+---
+
 ## 26.23 — 2026-06-05
 
 Device-classifier expansion. Several common asset classes previously fell
