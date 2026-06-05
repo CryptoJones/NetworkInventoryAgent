@@ -49,6 +49,15 @@ type hostDetailResponse struct {
 	Ports []*models.Port `json:"ports"`
 }
 
+// scansResponse is the JSON envelope for GET /api/v1/scans, mirroring
+// hostsResponse. Scans are newest-first (as the store returns them).
+type scansResponse struct {
+	Total  int            `json:"total"`
+	Limit  int            `json:"limit"`
+	Offset int            `json:"offset"`
+	Scans  []*models.Scan `json:"scans"`
+}
+
 // apiError sets standard headers and writes a JSON error body. The status
 // codes follow the standard REST conventions: 400 for bad input, 404 for
 // unknown resource, 500 for backend failure.
@@ -125,6 +134,54 @@ func (s *Server) handleAPIHosts(w http.ResponseWriter, r *http.Request) {
 		Hosts:  matched[start:end],
 	}); err != nil {
 		slog.Error("api encode hosts", "err", err)
+	}
+}
+
+// handleAPIScans returns scan history as paginated JSON. Optional `subnet`
+// query param exact-matches Scan.Subnet. Mirrors handleAPIHosts.
+func (s *Server) handleAPIScans(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, offset, err := parsePagination(q)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	all, err := s.scans.List(r.Context())
+	if err != nil {
+		slog.Error("api list scans", "err", err)
+		apiError(w, http.StatusInternalServerError, "list scans failed")
+		return
+	}
+
+	matched := all
+	if subnet := q.Get("subnet"); subnet != "" {
+		matched = make([]*models.Scan, 0, len(all))
+		for _, sc := range all {
+			if sc.Subnet == subnet {
+				matched = append(matched, sc)
+			}
+		}
+	}
+
+	total := len(matched)
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(scansResponse{
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+		Scans:  matched[start:end],
+	}); err != nil {
+		slog.Error("api encode scans", "err", err)
 	}
 }
 

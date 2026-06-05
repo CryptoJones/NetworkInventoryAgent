@@ -249,3 +249,64 @@ func TestAPIHostDetail_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	_ = resp.Body.Close()
 }
+
+func fixtureScans() []*models.Scan {
+	now := time.Now()
+	return []*models.Scan{
+		{ID: 1, Subnet: "10.0.0.0/24", HostsFound: 3, StartedAt: now},
+		{ID: 2, Subnet: "10.0.1.0/24", HostsFound: 1, StartedAt: now},
+		{ID: 3, Subnet: "10.0.0.0/24", HostsFound: 4, StartedAt: now},
+	}
+}
+
+type scansBody struct {
+	Total  int            `json:"total"`
+	Limit  int            `json:"limit"`
+	Offset int            `json:"offset"`
+	Scans  []*models.Scan `json:"scans"`
+}
+
+func TestAPIScans_ListsAllPaginated(t *testing.T) {
+	srv := newTestServer(t, &mockHostStore{}, &mockPortStore{}, &mockScanStore{scans: fixtureScans()})
+	resp := get(t, srv, "/api/v1/scans")
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body scansBody
+	decodeJSON(t, resp, &body)
+	assert.Equal(t, 3, body.Total)
+	assert.Equal(t, 100, body.Limit)
+	assert.Len(t, body.Scans, 3)
+}
+
+func TestAPIScans_Pagination(t *testing.T) {
+	srv := newTestServer(t, &mockHostStore{}, &mockPortStore{}, &mockScanStore{scans: fixtureScans()})
+	resp := get(t, srv, "/api/v1/scans?limit=2&offset=0")
+	defer func() { _ = resp.Body.Close() }()
+
+	var body scansBody
+	decodeJSON(t, resp, &body)
+	assert.Equal(t, 3, body.Total, "total reflects the full set, not the page")
+	assert.Equal(t, 2, body.Limit)
+	assert.Len(t, body.Scans, 2)
+}
+
+func TestAPIScans_SubnetFilter(t *testing.T) {
+	srv := newTestServer(t, &mockHostStore{}, &mockPortStore{}, &mockScanStore{scans: fixtureScans()})
+	resp := get(t, srv, "/api/v1/scans?subnet=10.0.0.0/24")
+	defer func() { _ = resp.Body.Close() }()
+
+	var body scansBody
+	decodeJSON(t, resp, &body)
+	assert.Equal(t, 2, body.Total, "only the two 10.0.0.0/24 scans match")
+	for _, sc := range body.Scans {
+		assert.Equal(t, "10.0.0.0/24", sc.Subnet)
+	}
+}
+
+func TestAPIScans_InvalidLimit(t *testing.T) {
+	srv := newTestServer(t, &mockHostStore{}, &mockPortStore{}, &mockScanStore{scans: fixtureScans()})
+	resp := get(t, srv, "/api/v1/scans?limit=0")
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}

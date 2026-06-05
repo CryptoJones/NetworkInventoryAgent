@@ -103,6 +103,7 @@ func NewServer(
 	// future v2 changes can land alongside without breaking consumers.
 	mux.HandleFunc("GET /api/v1/hosts", s.handleAPIHosts)
 	mux.HandleFunc("GET /api/v1/hosts/{ip}", s.handleAPIHostDetail)
+	mux.HandleFunc("GET /api/v1/scans", s.handleAPIScans)
 
 	s.srv = &http.Server{
 		Addr:              addr,
